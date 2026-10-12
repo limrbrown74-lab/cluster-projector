@@ -1,0 +1,10 @@
+// Root build file. Plugin is applied per-module so no extra plugins here.
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:8.1.4"
+    }
+}
