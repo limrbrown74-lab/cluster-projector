@@ -5,4 +5,12 @@
         <item name="android:statusBarColor">#0F1117</item>
         <item name="android:colorAccent">#00D4FF</item>
     </style>
+
+    <!-- 启动主题：深色背景，消除白屏预览窗口 -->
+    <style name="SplashTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0F1117</item>
+        <item name="android:statusBarColor">#0F1117</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">false</item>
+    </style>
 </resources>

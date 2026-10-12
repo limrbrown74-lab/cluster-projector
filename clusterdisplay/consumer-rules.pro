@@ -1,2 +1,2 @@
 # Keep public API of clusterdisplay.
--keep class com.example.reusable.cluster.** { public *; }
+-keep class org.clusterprojector.display.** { public *; }

@@ -110,7 +110,8 @@ public class MainActivity extends Activity {
 
         ensureOverlayPermission();
         pickTargetDisplay();
-        loadAppList();
+        // 异步加载应用列表，避免同步阻塞首帧渲染导致白屏
+        new android.os.Handler(getMainLooper()).postDelayed(this::loadAppList, 200);
     }
 
     // -------------------------------------------------- app list

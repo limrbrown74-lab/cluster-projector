@@ -34,7 +34,7 @@ public final class DisplayTarget {
     public boolean isDefault() { return isDefault; }
 
     @Override public String toString() {
-        return "ClusterDisplay{id=" + displayId + ", '" + name + "', "
+        return "DisplayTarget{id=" + displayId + ", '" + name + "', "
                 + width + "x" + height + (isDefault ? " (default)" : "") + "}";
     }
 }
