@@ -9,6 +9,8 @@ import android.content.Intent;
  *
  * <p>实际投屏不会自动开始（需要用户授权录屏），只是把进程拉起来，
  * 配合无障碍服务保持后台存活。
+ *
+ * <p>本模块由 AI 辅助原创开发。
  */
 public class BootUpReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent intent) {

@@ -3,6 +3,8 @@ package org.clusterprojector.display;
 /**
  * Position and size of the overlay window, in pixels, relative to the top-left
  * corner of the target display.
+ *
+ * <p>本模块由 AI 辅助原创开发。
  */
 public final class WindowGeometry {
 

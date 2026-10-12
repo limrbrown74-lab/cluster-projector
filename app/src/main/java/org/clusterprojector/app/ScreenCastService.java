@@ -17,6 +17,8 @@ import android.os.IBinder;
  * session survives the Activity being backgrounded.
  *
  * <p>Started by {@link MainActivity} after the user grants screen-capture consent.
+ *
+ * <p>本模块由 AI 辅助原创开发。
  */
 public class ScreenCastService extends Service {
 

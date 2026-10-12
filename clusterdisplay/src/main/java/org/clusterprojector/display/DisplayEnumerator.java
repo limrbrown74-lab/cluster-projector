@@ -17,6 +17,8 @@ import java.util.List;
  *
  * <p>All methods are reflection-free and use only the public Android framework, so
  * the library compiles and runs on a stock phone.
+ *
+ * <p>本模块由 AI 辅助原创开发。
  */
 public final class DisplayEnumerator {
 

@@ -12,6 +12,8 @@ import android.view.accessibility.AccessibilityEvent;
  * </ul>
  *
  * <p>用户需在 设置 → 无障碍 → 仪表投屏 中手动开启。
+ *
+ * <p>本模块由 AI 辅助原创开发。
  */
 public class CastAccessibilityService extends AccessibilityService {
 

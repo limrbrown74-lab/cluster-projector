@@ -10,6 +10,8 @@ import android.view.Gravity;
 /**
  * Full-screen test activity launched on the virtual display to verify projection.
  * Cycles through solid colors so you can see the overlay is live.
+ *
+ * <p>本模块由 AI 辅助原创开发。
  */
 public class TestCastActivity extends Activity {
 

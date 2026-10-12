@@ -6,6 +6,8 @@ import android.view.Display;
  * Immutable snapshot of a {@link Display} that the user can project onto.
  *
  * <p>Wraps the fields callers actually need: id, human-readable name and size.
+ *
+ * <p>本模块由 AI 辅助原创开发。
  */
 public final class DisplayTarget {
 
