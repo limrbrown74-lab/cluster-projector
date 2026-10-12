@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">仪表投屏</string>
+    <string name="accessibility_desc">允许仪表投屏在后台持续运行投屏服务，并监听窗口变化以支持反向控制。开启后不会收集任何个人数据。</string>
+</resources>
