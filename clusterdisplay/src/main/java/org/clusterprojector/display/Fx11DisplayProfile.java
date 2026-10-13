@@ -27,6 +27,18 @@ public final class Fx11DisplayProfile {
 
     private Fx11DisplayProfile() {}
 
+    public static WindowGeometry defaultDirectBounds() {
+        // 对齐实车日志中的 960x266，1920x532 居中 => x=480,y=133。
+        return WindowGeometry.centered(CLUSTER_WIDTH, CLUSTER_HEIGHT);
+    }
+
+    public static WindowGeometry defaultMirrorBounds() {
+        // 完整 contain 中控竖屏 1440x1920，在仪表全高 532 下宽度约 400。
+        int width = Math.round(CLUSTER_HEIGHT * (CENTER_WIDTH / (float) CENTER_HEIGHT));
+        int x = (CLUSTER_WIDTH - width) / 2;
+        return new WindowGeometry(x, 0, width, CLUSTER_HEIGHT);
+    }
+
     public static boolean isClusterSize(int width, int height) {
         return width == CLUSTER_WIDTH && height == CLUSTER_HEIGHT;
     }

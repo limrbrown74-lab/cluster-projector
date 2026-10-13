@@ -1,228 +1,510 @@
 # 仪表投屏 Cluster Projector
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Android](https://img.shields.io/badge/Android-8.0%2B-brightgreen.svg)
+![Android](https://img.shields.io/badge/Android-6.0%2B-brightgreen.svg)
 ![Gradle](https://img.shields.io/badge/Gradle-8.4-007396.svg)
 
-把 Android 车机中控屏上的任意应用画面，悬浮投射到仪表盘显示屏上。
-仪表盘无触控，所有窗口位置 / 尺寸 / 透明度均在中控屏控制面板上调节。
+面向 Android 多屏车机的仪表盘投屏实验工程，当前重点适配：
 
-> 本项目由 AI 辅助原创开发，仅供学习研究使用。实车操作请务必停车进行。
+- 吉利 FX11 / 博越 L 2022 款
+- 银河 NOS 2.3
+- Android 11，`RQ3A.211001.001`
+- 亿咖通 ecarx 定制系统
+
+> 本项目由 AI 辅助原创开发，仅用于自有设备的学习、调试和源码恢复。实车操作请停车进行。工程不包含 root、系统签名伪装、权限绕过、受保护内容抓取或厂商私有接口调用。
+
+当前 Demo：
+
+```text
+applicationId = org.clusterprojector.app
+versionCode   = 5
+versionName   = 1.2.2-fx11
+minSdk        = 23
+targetSdk     = 28
+```
 
 ---
 
-## ✨ 功能特性
+## 目录
 
-- **应用投屏**：列出本机已安装应用，点击即可投到仪表盘
-- **悬浮图层**：画面以 overlay 方式浮在原车仪表盘之上，不遮挡原车信息
-- **可调窗口**：位置（X/Y）、尺寸（宽/高）、透明度均可实时调节
-- **双屏并行**：中控屏控制面板与仪表盘画面同时运行，互不打断
-- **测试模式**：一键发送纯色测试画面，快速验证投屏链路
-- **后台保活**：前台服务 + 电池优化白名单 + 无障碍服务，降低被系统回收概率
-- **零依赖库**：核心模块仅依赖 Android Framework，可独立编译为 AAR
+1. [当前能力](#当前能力)
+2. [工作链路](#工作链路)
+3. [模式差异与边界](#模式差异与边界)
+4. [FX11 显示参数](#fx11-显示参数)
+5. [工程结构](#工程结构)
+6. [编译与打包](#编译与打包)
+7. [安装和操作流程](#安装和操作流程)
+8. [权限卡片说明](#权限卡片说明)
+9. [手机与车机环境差异](#手机与车机环境差异)
+10. [日志与实车判断](#日志与实车判断)
+11. [核心库调用](#核心库调用)
+12. [已知限制和后续计划](#已知限制和后续计划)
+13. [免责声明](#免责声明)
 
-## 📺 效果演示
+---
 
+## 当前能力
+
+### 1. 双模式自动降级
+
+- **直出模式，默认优先**
+  - 在仪表 Display 上创建窗口；
+  - 通过 `MediaProjection#createVirtualDisplay()` 创建独立虚拟屏；
+  - 使用公开 API `ActivityOptions.setLaunchDisplayId()` 尝试把 App 启动到虚拟屏；
+  - 不做 H.264/H.265 视频编码，资源占用更低；
+  - 如果车机策略允许，中控和仪表可以运行不同内容。
+
+- **无编码 GL 镜像兜底**
+  - 直出虚拟屏创建失败、测试 Activity 启动失败，或直出启动第三方 App 明确失败时自动切换；
+  - 捕获中控 Display 0；
+  - 通过 OpenGL ES OES 外部纹理直接渲染到仪表窗口；
+  - 没有视频编码、解码和网络传输；
+  - 兼容性通常更高，但仪表画面跟随中控前台内容。
+
+### 2. 仪表窗口控制
+
+支持实时调整：
+
+- 水平位置 X；
+- 垂直位置 Y；
+- 宽度；
+- 高度；
+- 透明度。
+
+控制区默认折叠，点击“图层控制”展开；投屏开始后会自动展开，方便在中控屏上调整仪表窗口。
+
+### 3. FX11 屏幕识别
+
+自动枚举当前进程可见 Display，并优先选择 `1920×532@320dpi` 的仪表长条屏，降低误选 HUD 或副驾屏的概率。
+
+### 4. 权限状态可视化
+
+首页顶部固定显示“权限检查”卡片：
+
+- 悬浮窗权限缺失时标红并直达设置；
+- MediaProjection 被拒绝后可再次发起系统授权；
+- 通知/日志等可选权限缺失时给出申请入口；
+- 应用列表为 0 时直达应用详情；
+- MIUI/HyperOS 手机上额外提示检查“获取应用列表”。
+
+### 5. 应用选择与测试画面
+
+- 使用 Launcher Intent 枚举可启动 App；
+- 可点击任意可启动 App 尝试投屏；
+- “测试投屏”会发送内置测试画面，用于先验证 Display、Surface 和 VirtualDisplay 链路；
+- 已建立投屏会话后切换 App 时不会重复弹出 MediaProjection 授权框。
+
+### 6. 诊断日志
+
+关键流程写入本地日志：
+
+- 优先目录：`/sdcard/Download/clusterprojector/`
+- 兜底目录：`/Android/data/org.clusterprojector.app/files/clusterprojector-logs/`
+
+没有公共存储权限时自动使用应用专属目录，不影响核心投屏。
+
+---
+
+## 工作链路
+
+### 直出模式
+
+```text
+MainActivity
+  └─ ScreenCastService 获取 MediaProjection 授权和前台服务
+      └─ CastController
+          └─ OverlayWindowHost 在仪表 Display 创建窗口
+              └─ SurfaceView
+                  └─ VirtualScreenHost 创建独立 VirtualDisplay
+                      └─ ActivityOptions.setLaunchDisplayId() 启动目标 App
 ```
-┌──────────────────────┐        ┌──────────────────────┐
-│   中控屏（控制面板）    │        │   仪表盘（悬浮画面）    │
-│                      │        │                      │
-│  [应用列表]           │  ───▶  │  ┌──────────────┐    │
-│  ● 高德地图           │        │  │  高德地图画面  │    │
-│  ● 网易云音乐         │        │  │  (可调大小)   │    │
-│  ● ...               │        │  └──────────────┘    │
-│                      │        │  原车仪表盘信息可见     │
-│  滑块: X Y 宽 高 透明度 │        │                      │
-└──────────────────────┘        └──────────────────────┘
-```
 
-## 🛠 技术栈
-
-| 项 | 版本 |
-|---|---|
-| minSdk | 23 (Android 8.0) |
-| compileSdk | 34 |
-| JDK | 17 |
-| Gradle | 8.4 |
-| AGP | 8.1.4 |
-| 第三方依赖 | 无（纯 Android Framework） |
-
-## 📁 项目结构
-
-```
-cluster-projector/
-├── app/                          # Demo 应用模块（可安装运行）
-│   └── src/main/java/org/clusterprojector/app/
-│       ├── MainActivity.java          # 主界面：应用列表 + 滑块控制面板
-│       ├── ScreenCastService.java     # MediaProjection 前台服务
-│       ├── CastAccessibilityService.java  # 无障碍服务（后台保活）
-│       ├── TestCastActivity.java      # 投屏测试画面
-│       └── BootUpReceiver.java        # 开机自启
-│
-└── clusterdisplay/               # 投屏核心库（可复用 AAR）
-    └── src/main/java/org/clusterprojector/display/
-        ├── CastController.java           # 统一控制器
-        ├── VirtualScreenHost.java        # 虚拟屏 + 应用启动
-        ├── OverlayWindowHost.java        # 仪表盘悬浮窗
-        ├── DisplayEnumerator.java        # Display 枚举
-        └── WindowGeometry.java           # 窗口几何数据
-```
-
-## 🚀 快速开始
-
-### 环境要求
-
-- Android Studio Hedgehog 或更新版本
-- JDK 17
-- Android SDK 34
-
-### 编译
-
-```bash
-./gradlew :app:assembleDebug
-```
-
-产物路径：
-
-```
-app/build/outputs/apk/debug/app-debug.apk
-```
-
-### 作为依赖引入
-
-把 `:clusterdisplay` 作为 composite 模块引入你的工程，或直接引用编译出的 AAR。
-
-## 📖 使用说明
-
-### 首次启动
-
-1. 安装 APK，打开"仪表投屏"
-2. 授予**悬浮窗权限**（设置 → 显示 → 其他应用在顶部显示）
-3. 授予**电池优化白名单**（设置 → 电池 → 不限制后台）
-4. 开启**无障碍服务**（设置 → 无障碍 → 仪表投屏）
-5. 授予**录屏权限**（投屏时系统弹窗确认）
-
-### 投屏操作
-
-1. 在应用列表中点击要投射的应用
-2. 同意系统录屏授权弹窗
-3. 仪表盘上即出现该应用的悬浮画面
-4. 在中控屏拖动滑块调整：
-   - **水平位置 X**：左右移动窗口
-   - **垂直位置 Y**：上下移动窗口
-   - **宽度 / 高度**：缩放窗口大小
-   - **透明度**：0% 全透明 ~ 100% 不透明
-5. 点击"测试投屏"可发送纯色画面验证链路
-
-## 🔐 权限说明
-
-| 权限 | 用途 |
-|---|---|
-| `SYSTEM_ALERT_WINDOW` | 在仪表盘上创建悬浮窗 |
-| `FOREGROUND_SERVICE` | 保持投屏服务前台运行 |
-| `FOREGROUND_SERVICE_MEDIA_PROJECTION` | Android 14+ 录屏前台服务类型 |
-| `START_ACTIVITIES_FROM_BACKGROUND` | 后台把应用启动到虚拟屏 |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | 电池优化白名单，防止被杀 |
-| `RECEIVE_BOOT_COMPLETED` | 开机自启 |
-| `POST_NOTIFICATIONS` | Android 13+ 前台服务通知 |
-| `QUERY_ALL_PACKAGES` | 列出本机全部已安装应用 |
-| `BIND_ACCESSIBILITY_SERVICE` | 无障碍服务绑定（后台保活） |
-
-## 🧩 核心模块
-
-### clusterdisplay —— 仪表盘投屏
+直出虚拟屏 flags：
 
 ```java
-// 1. 枚举可用 Display
-DisplayEnumerator dm = new DisplayEnumerator(context);
-List<DisplayTarget> displays = dm.listDisplays();
-
-// 2. 创建控制器
-CastController ctrl = new CastController(context, clusterInfo, display);
-ctrl.start(mediaProjection, metrics);
-
-// 3. 启动指定应用到仪表盘
-ctrl.launchApp("com.autonavi.minimap");
-
-// 4. 程序化调整窗口
-ctrl.setBounds(new WindowGeometry(100, 50, 800, 400));
-ctrl.setAlpha(0.85f);
+VIRTUAL_DISPLAY_FLAG_PUBLIC
+        | VIRTUAL_DISPLAY_FLAG_PRESENTATION
+        | VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
 ```
 
-## ⚠️ 注意事项
+### GL 镜像兜底
 
-- 本项目已适配**吉利博越L（银河 NOS 2.3）**，其他车型 / 车机系统需自行调整 Display 枚举与窗口参数
-- 本项目仅支持搭载 Android 系统的车机 / 平板，iOS 不适用
-- 仪表盘必须为系统枚举的独立 Display（AAOS 或定制 Android 车机）
-- 部分 OEM 车机的私有 Display 通道可能需要额外适配
-- 实车使用请遵守当地法律法规，导航数据不能作为驾驶依据
-- 请在停车状态下完成投屏与窗口调整操作
+```text
+MainActivity
+  └─ ScreenCastService 获取 MediaProjection
+      └─ CastController
+          └─ OverlayWindowHost 在仪表 Display 创建窗口
+              └─ MirrorGlSurfaceView
+                  └─ MirrorCaptureHost 捕获中控 Display 0
+                      └─ OpenGL OES 纹理直接合成到仪表窗口
+```
 
-## 📜 免责声明
+镜像虚拟屏 flags：
 
-1. **使用风险自担**：本软件按"原样"提供，不附带任何明示或暗示的担保。使用者须自行承担因安装、运行或修改本软件所产生的一切风险与后果。
-2. **车辆损坏免责**：因安装或使用本软件导致的任何车辆硬件损坏、仪表盘故障、车机系统异常、电路问题、保修失效或其他直接 / 间接损失，作者不承担任何责任。
-3. **数据与隐私**：本软件在本地运行，不上传任何数据；但使用者仍需自行评估隐私与数据安全风险。
-4. **交通法规**：驾驶过程中操作本软件可能违反当地交通法规，由此产生的罚单、事故或法律责任由使用者自行承担。
-5. **第三方品牌**：本项目提及的"高德地图""网易云音乐"等名称仅为应用示例，商标归各自所有者所有；本项目与上述公司无任何关联。
-6. **非官方性质**：本软件为独立开源项目，与任何车厂、车载系统厂商无官方合作或授权关系。
+```java
+VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
+        | VIRTUAL_DISPLAY_FLAG_PRESENTATION
+```
 
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request。
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/amazing`)
-3. 提交改动 (`git commit -m 'Add amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing`)
-5. 开启 Pull Request
-
-## 📄 开源协议
-
-本项目基于 [MIT License](LICENSE) 开源。
-
-## 🙏 致谢
-
-- Android Open Source Project
-- 所有为本项目提供思路与反馈的开发者
+两种模式都不做视频编码。区别是：直出尝试建立独立任务屏，镜像只把中控已有画面搬到仪表。
 
 ---
 
-## FX11 / 吉利博越 L 适配说明（2026-10-13）
+## 模式差异与边界
 
-本分支已按以下实车参数调整：
+| 能力 | 直出模式 | GL 镜像兜底 |
+|---|---|---|
+| 是否视频编码 | 否 | 否，OpenGL 纹理搬运 |
+| 资源占用 | 最低 | 有额外 GPU 合成开销 |
+| 中控/仪表是否独立 | 理论上可以，取决于 OEM 多 Display 策略 | 不独立，仪表跟随中控前台 |
+| 普通第三方 App | 可能被系统重定向或拒绝 | 通常可镜像中控上可见的内容 |
+| 预装定制 App | 被白名单放行概率较高，仍需实车验证 | 通常随中控前台镜像 |
+| `FLAG_SECURE` 内容 | 可能黑屏或失败 | 可能黑屏或无法捕获 |
+| 覆盖官方仪表图层 | 不保证 | 不保证 |
+
+普通第三方签名应用创建的 VirtualDisplay 不是系统 trusted display。即使设备 SELinux 为 permissive，也不能绕过 Android 的 Display 可见性、Activity 启动、AppOps、多窗口和厂商白名单策略。
+
+定制版高德地图、ICCOA CarLink 等预装应用被车机策略放行的概率通常高于普通第三方 App，但不能在未实车验证前承诺一定可用。
+
+当前自动降级能够覆盖**明确抛出异常或返回失败**的场景。如果系统“不报错但静默把 Activity 放回 Display 0”，需要后续增加前台 Display 检测和手动强制镜像开关。
+
+---
+
+## FX11 显示参数
 
 | 项目 | 参数 |
 |---|---|
-| 车型 | 吉利博越 L 2022 款 |
-| 系统 | 银河 NOS 2.3 / Android 11 `RQ3A.211001.001` |
-| 平台 | 亿咖通 ecarx 定制 |
-| SELinux | permissive |
-| 中控 Display | Display 0，1440×1920@160dpi |
-| 仪表 Display | 优先 Display 3，备选 Display 4，1920×532@320dpi |
-| 排除屏幕 | Display 1：800×480；Display 2：2880×1080 |
+| 车型 | 吉利博越 L 2022 款 / FX11 |
+| 系统 | 银河 NOS 2.3 |
+| Android | 11，`RQ3A.211001.001` |
+| 平台 | 亿咖通 ecarx |
+| 中控屏 | Display 0，`1440×1920@160dpi` |
+| HUD/小屏 | Display 1，`800×480@320dpi`，排除或降权 |
+| 副驾/娱乐屏 | Display 2，`2880×1080@160dpi`，排除或降权 |
+| 首选仪表屏 | Display 3，`1920×532@320dpi` |
+| 备选仪表屏 | Display 4，`1920×532@320dpi` |
 
-关键适配：
+默认直出窗口：
 
-1. Demo App 的 `targetSdkVersion` 调整为 28，与车机预装多屏应用的兼容级别保持一致。
-2. 新增 `Fx11DisplayProfile`，自动优先识别 1920×532@320dpi 的仪表长条屏，不再简单选择“第一个非默认屏”。
-3. Android 11 上使用公开的 `Context.createWindowContext(Display, type, options)` 创建仪表窗口，不再反射隐藏的 `LayoutParams#setDisplayId()`。
-4. 默认投屏窗口为 960×266，居中于 1920×532 仪表屏，与实车日志中的 Display/QNX 区域对齐。
-5. 虚拟屏命名为 `SecondaryScreenMirror`，密度固定使用仪表屏 320dpi。
-6. Service 先进入前台，再获取 `MediaProjection`，并注册 `MediaProjection.Callback` 处理系统回收。
-7. 增加虚拟屏和 Overlay 的错误日志，关键 Logcat tag：
-   - `ClusterDisplay`
-   - `ClusterOverlay`
-   - `ClusterVirtual`
-   - `ClusterCast`
-   - `ScreenCastService`
+```text
+960×266，x=480，y=133
+```
 
-调试构建产物：
+即默认居中于 `1920×532` 仪表长条屏。
+
+镜像模式默认 contain 中控竖屏：高度填满仪表屏，宽度按中控屏宽高比计算，水平居中并保留黑边。
+
+---
+
+## 工程结构
+
+```text
+cluster-projector/
+├── app/
+│   └── src/main/
+│       ├── java/org/clusterprojector/app/
+│       │   ├── MainActivity.java              # 控制面板、权限卡片、Display/应用选择
+│       │   ├── ScreenCastService.java         # MediaProjection 前台服务
+│       │   ├── CastAccessibilityService.java  # 可选预留，当前核心链路不依赖
+│       │   ├── TestCastActivity.java          # 仪表链路测试画面
+│       │   ├── AppLog.java                    # 本地诊断日志
+│       │   ├── ClusterApp.java                # Application，初始化日志
+│       │   ├── CrashHandler.java              # 崩溃记录
+│       │   └── BootUpReceiver.java            # 可选开机入口
+│       ├── res/
+│       │   ├── layout/activity_main.xml       # 主控制面板
+│       │   └── layout/app_list_item.xml       # 应用列表项
+│       └── AndroidManifest.xml
+│
+├── clusterdisplay/
+│   └── src/main/java/org/clusterprojector/display/
+│       ├── CastController.java                # 直出优先 + 自动降级核心
+│       ├── DisplayEnumerator.java             # Display 枚举与评分
+│       ├── DisplayTarget.java                 # Display 描述对象
+│       ├── Fx11DisplayProfile.java            # FX11 参数、评分、默认窗口
+│       ├── OverlayWindowHost.java             # 仪表 Display 上的窗口宿主
+│       ├── VirtualScreenHost.java             # 直出 VirtualDisplay
+│       ├── MirrorCaptureHost.java             # 中控 Display 0 捕获
+│       ├── MirrorGlSurfaceView.java           # 无编码 OpenGL 镜像渲染
+│       └── WindowGeometry.java                # X/Y/宽/高数据
+│
+└── README.md
+```
+
+`clusterdisplay` 是零三方依赖的 Android Library，仅使用 Android Framework，可单独输出 AAR 给其他工程复用。
+
+---
+
+## 编译与打包
+
+### 环境要求
+
+- JDK 17
+- Android SDK Platform 34
+- Gradle 8.4
+- Android Gradle Plugin 8.1.4
+
+### 完整构建
+
+```bash
+./gradlew clean :app:assembleDebug :app:lintDebug :clusterdisplay:assembleDebug
+```
+
+产物：
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
-cluster-projector-fx11-debug.apk
 clusterdisplay/build/outputs/aar/clusterdisplay-debug.aar
 ```
 
-> 注意：SELinux permissive 只代表 SELinux 不拦截，并不绕过 Android 的 Display 可见性、AppOps、前台服务和多 Display 启动策略。若日志提示无法在 Display 3/4 添加窗口，说明还需要车机系统侧白名单或厂商多屏授权；本工程不包含 root、签名伪装或权限绕过实现。
+仓库不提交预编译 APK，避免二进制文件反复进入 Git 历史。需要安装时，请先本地执行构建，再从 `app/build/outputs/apk/debug/app-debug.apk` 取包。
+
+当前 Debug 包使用调试签名，适合自有车机安装验证，不用于应用商店分发。
+
+### 为什么 targetSdk 是 28
+
+FX11 为 Android 11，部分车机预装和定制应用仍停留在旧 targetSdk。本工程使用 targetSdk 28 是为了减少新版系统后台、存储和兼容性策略对实车验证的干扰。该选择不用于绕过运行时权限，悬浮窗和 MediaProjection 仍由用户明确授权。
+
+---
+
+## 安装和操作流程
+
+### FX11 安装
+
+```bash
+adb connect <FX11_IP>:5555
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+如果车机 adb 允许修改 AppOps，也可以执行：
+
+```bash
+adb shell appops set org.clusterprojector.app SYSTEM_ALERT_WINDOW allow
+```
+
+如果该命令在车机上受限，可以直接在 App 首页点击权限卡片按钮，进入系统设置手动允许。
+
+仓库源码不包含根目录 APK；每次修改后请重新执行 Gradle 构建，再安装 `app/build/outputs/apk/debug/app-debug.apk`。
+
+### 推荐验证顺序
+
+1. 打开“仪表投屏”。
+2. 先处理首页“权限检查”卡片中的缺失权限。
+3. 在“目标显示设备”中选择 `1920×532@320dpi` 的仪表屏。
+4. 点击“测试投屏（显示测试画面）”。
+5. 在系统 MediaProjection 弹窗中人工确认。
+6. 观察仪表是否出现测试画面。
+7. 如果直出失败，等待自动切换到 GL 镜像。
+8. 展开“图层控制”，调整位置、大小和透明度。
+9. 确认测试画面正常后，再点击应用列表中的定制版高德地图或 ICCOA CarLink。
+10. 最后再测试普通第三方 App。
+11. 点击“停止投屏”释放会话；点击“查看日志文件”确认日志路径。
+
+手机只有 Display 0 时，应用会阻止误启动投屏，这是保护逻辑，不代表车机链路异常。
+
+---
+
+## 权限卡片说明
+
+首页权限卡片会把权限分成核心权限、投屏授权和可选权限。
+
+| 项目 | 是否必需 | 缺失时的处理 |
+|---|---:|---|
+| 悬浮窗 / 显示在其他应用上层 | 必需 | 卡片按钮直达系统设置 |
+| MediaProjection | 投屏时必需 | 点击测试投屏或应用时弹出系统确认；拒绝后卡片可重新发起 |
+| 通知权限，Android 13+ | 可选 | 影响前台服务通知可见性，不阻断投屏 |
+| 存储权限，Android 12 及以下 | 可选 | 影响公共 Download 日志，拒绝后使用应用专属目录 |
+| 应用列表 | 视 ROM 而定 | 列表为 0 时直达应用详情；MIUI/HyperOS 始终保留检查入口 |
+
+权限按钮按优先级处理：
+
+1. 缺悬浮窗：跳悬浮窗设置；
+2. MediaProjection 曾被拒绝：重新发起系统授权；
+3. 应用列表为 0：打开应用详情；
+4. 通知/日志权限缺失：发起运行时权限申请；
+5. 如果运行时权限被系统限制再次弹窗：打开应用详情；
+6. 普通车机系统权限就绪：提示可以开始投屏；
+7. MIUI/HyperOS 手机：即使已能列出 Launcher App，也保留应用详情入口用于检查完整应用列表权限。
+
+从悬浮窗设置返回后，界面会自动刷新。如果是在投屏过程中跳转授权，返回后会继续原投屏流程。
+
+MediaProjection 令牌不能、也不应该静默获取。每次建立新的投屏会话，都必须由用户在系统弹窗中确认。
+
+---
+
+## 手机与车机环境差异
+
+当前开发和界面冒烟使用过：
+
+```text
+Redmi K20 Pro
+Android 16 / API 36
+1080×2340
+仅 Display 0
+MIUI/HyperOS
+```
+
+手机环境只能验证：
+
+- 界面布局；
+- 权限卡片；
+- 应用列表；
+- 设置页跳转；
+- Display 0 保护逻辑；
+- 崩溃和基础日志。
+
+手机不能验证：
+
+- Display 3/4 仪表物理屏；
+- 车机多 Display 启动策略；
+- ecarx/SystemUI/QNX 图层合成；
+- 定制高德地图和 ICCOA CarLink 白名单；
+- 实车仪表置顶效果；
+- 直出与镜像的真实性能。
+
+MIUI/HyperOS 可能有独立的“获取应用列表”隐私开关。当前版本通过 Launcher Intent 查询可启动应用，在测试手机上即使没有手动授予完整应用列表权限，也能列出约 97 个可启动应用；如果列表数量异常或为 0，仍需到应用详情中检查该开关。
+
+---
+
+## 日志与实车判断
+
+### 实时日志
+
+```bash
+adb logcat -c
+adb logcat -s ClusterDisplay:D ClusterOverlay:D ClusterVirtual:D ClusterCast:D ClusterMirror:D ClusterMirrorGL:D ScreenCastService:D MainActivity:D AndroidRuntime:E
+```
+
+### 直出成功的典型日志
+
+```text
+ClusterOverlay: overlay added to display=3 ...
+ClusterVirtual: created 1920x532@320 id=...
+```
+
+### 自动降级的典型日志
+
+```text
+ClusterCast: fallback to mirror: ...
+ClusterMirror: mirror capture started: 1440x1920@160
+```
+
+### 实车重点观察
+
+- 仪表 Display 是否枚举为 Display 3 或 Display 4；
+- 窗口是否成功 add 到仪表 Display；
+- VirtualDisplay 是否创建成功；
+- 目标 Activity 是留在虚拟 Display，还是被系统静默放回 Display 0；
+- 是否触发 `fallback to mirror`；
+- 镜像画面是否流畅、是否有明显黑边；
+- 调整 X/Y/宽高/透明度是否立即生效；
+- 是否能盖在原厂仪表图层上方；
+- 高德地图、ICCOA CarLink 是否出现黑屏、保护内容或重定向；
+- 退出 Activity 或停止服务后资源是否释放。
+
+### 崩溃日志
+
+```bash
+adb logcat -d -b crash
+```
+
+---
+
+## 核心库调用
+
+```java
+DisplayEnumerator enumerator = new DisplayEnumerator(context);
+List<DisplayTarget> displays = enumerator.listDisplays();
+DisplayTarget cluster = enumerator.findRecommendedDisplay();
+Display clusterDisplay = enumerator.resolveDisplay(cluster);
+
+CastController controller = new CastController(context, cluster, clusterDisplay);
+controller.setListener(new CastController.Listener() {
+    @Override public void onVirtualDisplayReady(int mode, int virtualDisplayId) { }
+
+    @Override public void onModeChanged(int mode, String reason) { }
+
+    @Override public void onAppLaunched(String packageName, boolean success, String error) { }
+
+    @Override public void onError(String message, Throwable cause) { }
+});
+
+// MediaProjection 必须由用户通过系统弹窗授权后传入。
+controller.start(mediaProjection);
+
+// 先投测试 Activity，再投第三方 App，更便于定位问题。
+controller.launchTestScreen(TestCastActivity.class);
+controller.launchApp("com.example.map");
+
+controller.setBounds(new WindowGeometry(480, 133, 960, 266));
+controller.setAlpha(1.0f);
+```
+
+使用库时仍需自行处理：
+
+- MediaProjection 前台服务和授权回调；
+- `SYSTEM_ALERT_WINDOW` 特殊权限；
+- Android 14+ 的 `mediaProjection` foregroundServiceType；
+- 实车 Display 枚举和失败提示。
+
+---
+
+## 已知限制和后续计划
+
+1. 直出能否承载其他 App 由车机多 Display/多窗口策略决定，SELinux permissive 不等于可绕过。
+2. GL 镜像兼容性较高，但仪表内容跟随中控前台，不是完全独立的第二屏任务。
+3. `TYPE_APPLICATION_OVERLAY` 只在 Android 窗口体系内争取置顶；如果原厂仪表使用 SystemUI 私有 Surface 或 QNX 底层 layer，不保证覆盖。
+4. 带 `FLAG_SECURE`、受保护 Buffer 或厂商私有安全通道的内容可能黑屏。
+5. 当前 `CastController` 主要由 Activity 持有，Activity 销毁会停止投屏；后续可迁移到前台 Service 长期持有。
+6. 自动降级能捕获显式异常，但尚不能识别“系统静默回中控”的全部情况。
+7. 尚未提供手动强制镜像开关。
+8. 尚未实现仪表触摸/按键反向控制。
+9. 尚未实现导航音频、头枕音频或多区音频路由。
+
+建议后续优先级：
+
+1. 检测启动后 Activity 实际所在 Display，识别静默回中控；
+2. 增加手动“强制镜像模式”开关；
+3. 将 `CastController` 完整迁入 Service；
+4. 增加实时 FPS、丢帧和 GPU 耗时显示；
+5. 增加仪表反向输入实验开关；
+6. 单独研究 Android 音频多 zone/设备路由，不与显示投屏混为一项能力。
+
+---
+
+## 版本记录
+
+### 1.2.2-fx11 / versionCode 5
+
+- 新增首页“权限检查”卡片；
+- 悬浮窗、MediaProjection、通知/日志、应用列表状态可视化；
+- 权限缺失时提供直达设置或重新授权入口；
+- MIUI/HyperOS 手机上保留“获取应用列表”手动检查入口；
+- 压缩权限卡片高度，图层控制默认折叠，投屏开始后自动展开；
+- 使用 Launcher Intent 枚举可启动 App；
+- 仓库不再提交根目录预编译 APK，只保留源码和 Gradle 构建产物路径；
+- 清理未实际使用的权限声明，保留无障碍预留、状态点资源和开机入口；
+- 完整通过 Debug 构建、AAR 构建和 lint 检查；当前 lint 为 0 error、45 warning（主要为硬编码中文、图标规范和绘制优化提示）。
+
+### 1.2.1-fx11
+
+- 实现直出优先、无编码 OpenGL 镜像自动降级；
+- 增加 FX11 Display 评分和 `1920×532@320dpi` 识别；
+- 增加窗口位置、大小、透明度控制；
+- 增加测试画面、诊断日志和 MediaProjection 前台服务。
+
+---
+
+## 免责声明
+
+1. 本软件按“原样”提供，不附带任何明示或暗示担保，安装、运行和修改风险自担。
+2. 请勿在驾驶过程中操作；导航与驾驶信息以车辆原厂仪表和实际道路为准。
+3. 本项目不提供 root、权限绕过、系统签名伪装或受保护内容抓取能力。
+4. 本项目与吉利、亿咖通、高德、ICCOA/CarLink 等公司无官方合作或授权关系，相关商标归各自所有者所有。
+5. 请仅在自有、已授权的设备上调试，并遵守当地法律法规。
+
+---
+
+## License
+
+[MIT License](LICENSE)

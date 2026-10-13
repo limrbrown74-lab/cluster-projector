@@ -66,15 +66,6 @@ public class ScreenCastService extends Service {
                 return START_NOT_STICKY;
             }
 
-            Notification notification = buildNotification();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(NOTIFICATION_ID, notification,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
-            } else {
-                startForeground(NOTIFICATION_ID, notification);
-            }
-            AppLog.i("ScreenCastService", "startForeground OK");
-
             int resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0);
             Intent resultData = intent.getParcelableExtra(EXTRA_RESULT_DATA);
             if (resultCode != Activity.RESULT_OK || resultData == null) {
@@ -92,24 +83,52 @@ public class ScreenCastService extends Service {
             }
 
             stopProjection(false);
-            mediaProjection = manager.getMediaProjection(resultCode, resultData);
-            if (mediaProjection == null) {
-                notifyError("getMediaProjection 返回 null");
-                stopSelf();
-                return START_NOT_STICKY;
-            }
 
-            mediaProjection.registerCallback(new MediaProjection.Callback() {
-                @Override public void onStop() {
-                    AppLog.w("ScreenCastService", "MediaProjection onStop");
-                    stopProjection(true);
-                    stopSelf();
+            Notification notification = buildNotification();
+            MediaProjection newProjection = null;
+            try {
+                MediaProjection.Callback projectionCallback = new MediaProjection.Callback() {
+                    @Override public void onStop() {
+                        AppLog.w("ScreenCastService", "MediaProjection onStop");
+                        stopProjection(true);
+                        stopSelf();
+                    }
+                };
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    // Android 14+ 要求先取得 MediaProjection 并注册回调，再启动对应类型的前台服务。
+                    newProjection = manager.getMediaProjection(resultCode, resultData);
+                    if (newProjection == null) {
+                        throw new IllegalStateException("getMediaProjection 返回 null");
+                    }
+                    newProjection.registerCallback(projectionCallback, mainHandler);
+                    startForeground(NOTIFICATION_ID, notification,
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+                } else {
+                    // FX11 / Android 11 保持“先前台服务、再获取投影”的兼容顺序。
+                    startForeground(NOTIFICATION_ID, notification);
+                    AppLog.i("ScreenCastService", "startForeground OK");
+                    newProjection = manager.getMediaProjection(resultCode, resultData);
+                    if (newProjection == null) {
+                        throw new IllegalStateException("getMediaProjection 返回 null");
+                    }
+                    newProjection.registerCallback(projectionCallback, mainHandler);
                 }
-            }, mainHandler);
 
-            AppLog.i("ScreenCastService", "getMediaProjection OK");
-            if (listener != null) listener.onReady(mediaProjection);
-            return START_NOT_STICKY;
+                mediaProjection = newProjection;
+                AppLog.i("ScreenCastService", "getMediaProjection OK");
+                if (listener != null) listener.onReady(mediaProjection);
+                return START_NOT_STICKY;
+            } catch (Throwable projectionError) {
+                if (newProjection != null) {
+                    // stop() 会释放该投影会话；具体 callback 实例由系统随会话一起解除。
+                    try {
+                        newProjection.stop();
+                    } catch (Throwable ignored) {
+                    }
+                }
+                throw projectionError;
+            }
         } catch (Throwable t) {
             AppLog.e("ScreenCastService", "onStartCommand 异常", t);
             notifyError(t.getMessage() == null ? t.toString() : t.getMessage());

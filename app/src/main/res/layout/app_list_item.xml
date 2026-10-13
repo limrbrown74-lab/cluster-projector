@@ -4,13 +4,16 @@
     android:layout_height="wrap_content"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:padding="12dp">
+    android:paddingStart="10dp"
+    android:paddingEnd="10dp"
+    android:paddingTop="7dp"
+    android:paddingBottom="7dp">
 
     <ImageView
         android:id="@+id/appIcon"
-        android:layout_width="36dp"
-        android:layout_height="36dp"
-        android:layout_marginEnd="12dp" />
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:layout_marginEnd="10dp" />
 
     <LinearLayout
         android:layout_width="0dp"
@@ -22,14 +25,20 @@
             android:id="@+id/appName"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:maxWidth="320dp"
             android:textColor="#FFFFFF"
-            android:textSize="14sp" />
+            android:textSize="13sp" />
 
         <TextView
             android:id="@+id/appPkg"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textColor="#5B6075"
-            android:textSize="11sp" />
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:maxWidth="320dp"
+            android:textColor="#8B8FA3"
+            android:textSize="10sp" />
     </LinearLayout>
 </LinearLayout>

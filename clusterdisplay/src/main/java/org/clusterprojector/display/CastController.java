@@ -2,31 +2,46 @@ package org.clusterprojector.display;
 
 import android.content.Context;
 import android.media.projection.MediaProjection;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Display;
+import android.view.WindowManager;
 
-/** FX11 仪表投屏控制器。 */
+/** FX11 仪表投屏控制器：直出优先，失败后自动切到无编码 GL 镜像。 */
 public final class CastController {
 
     private static final String TAG = "ClusterCast";
 
+    public static final int MODE_DIRECT = 0;
+    public static final int MODE_MIRROR = 1;
+
     private final Context context;
     private final DisplayTarget clusterInfo;
     private final Display clusterDisplay;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private MediaProjection mediaProjection;
     private OverlayWindowHost overlay;
-    private VirtualScreenHost virtualScreen;
+    private VirtualScreenHost directDisplay;
+    private MirrorCaptureHost mirrorCapture;
+
     private WindowGeometry bounds;
     private float opacity = 1f;
     private boolean active;
-    private boolean virtualReady;
+    private int mode = MODE_DIRECT;
+    private boolean directReady;
+    private boolean directSurfaceAttached;
+    private boolean mirrorReady;
+    private boolean switchingMode;
     private String pendingPackage;
     private Class<?> pendingTestActivity;
     private Listener listener;
 
     public interface Listener {
-        void onVirtualDisplayReady(int virtualDisplayId);
+        void onVirtualDisplayReady(int mode, int virtualDisplayId);
+        void onModeChanged(int mode, String reason);
         void onAppLaunched(String packageName, boolean success, String error);
         void onError(String message, Throwable cause);
     }
@@ -42,56 +57,104 @@ public final class CastController {
     }
 
     public boolean isRunning() { return active; }
-    public boolean isVirtualReady() { return virtualReady; }
+    public boolean isVirtualReady() { return mode == MODE_DIRECT ? directReady : mirrorReady; }
+    public int getMode() { return mode; }
     public WindowGeometry getBounds() { return bounds; }
     public float getAlpha() { return opacity; }
-    public int getVirtualDisplayId() { return virtualScreen == null ? -1 : virtualScreen.getDisplayId(); }
+
+    public int getVirtualDisplayId() {
+        if (mode == MODE_MIRROR) return Display.DEFAULT_DISPLAY;
+        return directDisplay == null ? -1 : directDisplay.getDisplayId();
+    }
 
     public void start(MediaProjection projection) {
         if (active) return;
         active = true;
-        virtualReady = false;
+        mode = MODE_DIRECT;
+        directReady = false;
+        directSurfaceAttached = false;
+        mirrorReady = false;
         mediaProjection = projection;
+        bounds = Fx11DisplayProfile.defaultDirectBounds();
 
-        // FX11 实测云盘链路的窗口为 960x266，位于 1920x532 屏幕中央。
-        bounds = WindowGeometry.centered(clusterInfo.getWidth(), clusterInfo.getHeight());
+        DisplayMetrics centerMetrics = getDefaultDisplayMetrics();
         overlay = new OverlayWindowHost(
                 context,
                 clusterDisplay,
                 clusterInfo.getWidth(),
                 clusterInfo.getHeight(),
+                centerMetrics.widthPixels > 0 ? centerMetrics.widthPixels : Fx11DisplayProfile.CENTER_WIDTH,
+                centerMetrics.heightPixels > 0 ? centerMetrics.heightPixels : Fx11DisplayProfile.CENTER_HEIGHT,
                 bounds);
         overlay.setSurfaceCallback(new OverlayWindowHost.SurfaceCallback() {
-            @Override public void onSurfaceAvailable(android.view.Surface surface) {
-                Log.i(TAG, "surface available");
+            @Override public void onDirectSurfaceAvailable(android.view.Surface surface) {}
+
+            @Override public void onDirectSurfaceChanged(android.view.Surface surface, int width, int height) {
+                attachDirectDisplay(surface);
             }
 
-            @Override public void onSurfaceChanged(android.view.Surface surface, int width, int height) {
-                attachOrUpdateVirtualDisplay(surface);
+            @Override public void onDirectSurfaceDestroyed() {
+                Log.i(TAG, "direct surface destroyed");
+                directReady = false;
+                directSurfaceAttached = false;
             }
 
-            @Override public void onSurfaceDestroyed() {
-                Log.i(TAG, "surface destroyed");
+            @Override public void onMirrorInputSurfaceReady(android.view.Surface surface) {
+                attachMirrorCapture(surface);
+            }
+
+            @Override public void onMirrorInputSurfaceDestroyed() {
+                mirrorReady = false;
+                if (mirrorCapture != null) mirrorCapture.stop();
             }
         });
         overlay.start();
+        notifyModeChanged(MODE_DIRECT, "默认直出模式");
     }
 
-    private void attachOrUpdateVirtualDisplay(android.view.Surface surface) {
+    private void attachDirectDisplay(android.view.Surface surface) {
+        if (!active || mode != MODE_DIRECT || switchingMode) return;
         try {
-            if (virtualScreen == null) {
-                virtualScreen = new VirtualScreenHost(context, mediaProjection);
-                virtualScreen.create(
+            if (directDisplay == null || !directSurfaceAttached) {
+                if (directDisplay != null) directDisplay.release();
+                directDisplay = new VirtualScreenHost(context, mediaProjection);
+                directDisplay.create(
                         clusterInfo.getWidth(),
                         clusterInfo.getHeight(),
                         clusterInfo.getDensityDpi(),
                         surface);
-                virtualReady = true;
-                if (listener != null) listener.onVirtualDisplayReady(virtualScreen.getDisplayId());
-                flushPendingLaunch();
             } else {
-                virtualScreen.setSurface(surface);
+                // SurfaceView 尺寸固定；正常只会 attach 一次。异常重建时只替换 Surface，避免重建任务栈。
+                directDisplay.setSurface(surface);
             }
+            directSurfaceAttached = true;
+            directReady = true;
+            if (listener != null) {
+                listener.onVirtualDisplayReady(MODE_DIRECT, directDisplay.getDisplayId());
+            }
+            flushPendingLaunch();
+        } catch (Throwable t) {
+            Log.w(TAG, "direct display unavailable, fallback to mirror", t);
+            fallbackToMirror(null, "直出虚拟屏创建失败：" + t.getMessage());
+        }
+    }
+
+    private void attachMirrorCapture(android.view.Surface inputSurface) {
+        if (!active || mode != MODE_MIRROR) return;
+        try {
+            DisplayMetrics metrics = getDefaultDisplayMetrics();
+            int sourceWidth = metrics.widthPixels > 0
+                    ? metrics.widthPixels : Fx11DisplayProfile.CENTER_WIDTH;
+            int sourceHeight = metrics.heightPixels > 0
+                    ? metrics.heightPixels : Fx11DisplayProfile.CENTER_HEIGHT;
+            int sourceDpi = metrics.densityDpi > 0
+                    ? metrics.densityDpi : Fx11DisplayProfile.CENTER_DENSITY_DPI;
+
+            if (mirrorCapture == null) mirrorCapture = new MirrorCaptureHost(context, mediaProjection);
+            mirrorCapture.start(sourceWidth, sourceHeight, sourceDpi, inputSurface);
+            mirrorReady = true;
+            if (listener != null) listener.onVirtualDisplayReady(MODE_MIRROR, Display.DEFAULT_DISPLAY);
+            flushPendingLaunch();
         } catch (Throwable t) {
             active = false;
             if (listener != null) listener.onError(t.getMessage(), t);
@@ -103,37 +166,77 @@ public final class CastController {
         String pkg = pendingPackage;
         pendingTestActivity = null;
         pendingPackage = null;
-
-        if (test != null) {
-            launchTestScreen(test);
-        } else if (pkg != null) {
-            launchApp(pkg);
-        }
+        if (test != null) launchTestScreen(test);
+        else if (pkg != null) launchApp(pkg);
     }
 
     public boolean launchApp(String packageName) {
         if (!active) return false;
-        if (!virtualReady || virtualScreen == null) {
+        if (!isVirtualReady()) {
             pendingPackage = packageName;
-            Log.i(TAG, "virtual display not ready, pending " + packageName);
+            Log.i(TAG, "display not ready, pending " + packageName);
             return true;
         }
-        boolean ok = virtualScreen.launchApp(packageName);
-        String error = ok ? null : virtualScreen.getLastError();
+
+        if (mode == MODE_DIRECT) {
+            boolean ok = directDisplay.launchApp(packageName);
+            if (ok) {
+                if (listener != null) listener.onAppLaunched(packageName, true, null);
+                return true;
+            }
+            fallbackToMirror(packageName, "直出启动第三方 App 失败：" + directDisplay.getLastError());
+            return true;
+        }
+
+        boolean ok = mirrorCapture.launchAppOnDefaultDisplay(packageName);
+        String error = ok ? null : mirrorCapture.getLastError();
         if (listener != null) listener.onAppLaunched(packageName, ok, error);
         return ok;
     }
 
     public boolean launchTestScreen(Class<?> testActivityClass) {
         if (!active) return false;
-        if (!virtualReady || virtualScreen == null) {
+        if (!isVirtualReady()) {
             pendingTestActivity = testActivityClass;
             return true;
         }
-        boolean ok = virtualScreen.launchActivity(testActivityClass);
+
+        if (mode == MODE_DIRECT) {
+            boolean ok = directDisplay.launchActivity(testActivityClass);
+            String label = testActivityClass.getName();
+            if (ok) {
+                if (listener != null) listener.onAppLaunched(label, true, null);
+                return true;
+            }
+            fallbackToMirror(null, "直出测试画面失败：" + directDisplay.getLastError());
+            return launchTestScreen(testActivityClass);
+        }
+
+        boolean ok = mirrorCapture.startActivityOnDefaultDisplay(testActivityClass);
         String label = testActivityClass.getName();
-        if (listener != null) listener.onAppLaunched(label, ok, ok ? null : virtualScreen.getLastError());
+        if (listener != null) listener.onAppLaunched(label, ok, ok ? null : mirrorCapture.getLastError());
         return ok;
+    }
+
+    private void fallbackToMirror(String packageName, String reason) {
+        if (!active || mode == MODE_MIRROR) return;
+        switchingMode = true;
+        // null 表示直出虚拟屏创建阶段失败，不能覆盖此前已经排队的 App。
+        if (packageName != null) pendingPackage = packageName;
+        Log.w(TAG, "fallback to mirror: " + reason);
+        directReady = false;
+        directSurfaceAttached = false;
+        if (directDisplay != null) {
+            directDisplay.release();
+            directDisplay = null;
+        }
+        mode = MODE_MIRROR;
+        bounds = Fx11DisplayProfile.defaultMirrorBounds();
+        overlay.setBounds(bounds);
+        overlay.showMirror();
+        switchingMode = false;
+        notifyModeChanged(MODE_MIRROR, reason);
+        if (mirrorReady) flushPendingLaunch();
     }
 
     public void setBounds(WindowGeometry newBounds) {
@@ -151,19 +254,42 @@ public final class CastController {
     }
 
     public void stop() {
-        if (!active && overlay == null && virtualScreen == null) return;
+        if (!active && overlay == null) return;
         active = false;
-        virtualReady = false;
+        directReady = false;
+        directSurfaceAttached = false;
+        mirrorReady = false;
         pendingPackage = null;
         pendingTestActivity = null;
-        if (virtualScreen != null) {
-            virtualScreen.release();
-            virtualScreen = null;
+        if (directDisplay != null) {
+            directDisplay.release();
+            directDisplay = null;
+        }
+        if (mirrorCapture != null) {
+            mirrorCapture.stop();
+            mirrorCapture = null;
         }
         if (overlay != null) {
             overlay.stop();
             overlay = null;
         }
         mediaProjection = null;
+    }
+
+    private DisplayMetrics getDefaultDisplayMetrics() {
+        DisplayMetrics metrics = new DisplayMetrics();
+        try {
+            WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+            if (wm != null) wm.getDefaultDisplay().getRealMetrics(metrics);
+        } catch (Throwable t) {
+            Log.w(TAG, "get default display metrics failed", t);
+        }
+        return metrics;
+    }
+
+    private void notifyModeChanged(int newMode, String reason) {
+        mainHandler.post(() -> {
+            if (listener != null) listener.onModeChanged(newMode, reason);
+        });
     }
 }

@@ -1,9 +1,10 @@
 package org.clusterprojector.app;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.ApplicationInfo;
+import android.content.pm.ResolveInfo;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.Drawable;
 import android.hardware.display.DisplayManager;
@@ -35,26 +36,41 @@ import org.clusterprojector.display.WindowGeometry;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
 
     private static final int REQ_OVERLAY = 1001;
     private static final int REQ_PROJECTION = 1002;
+    private static final int REQ_STARTUP_PERMISSIONS = 1003;
+    private static final int REQ_PROJECTION_PERMISSIONS = 1004;
 
     private MediaProjectionManager projectionManager;
     private DisplayEnumerator displayEnumerator;
 
     private TextView statusText;
+    private TextView permissionStatusText;
+    private TextView permissionSummaryText;
     private ListView appList;
     private Spinner displaySpinner;
+    private View controlsContent;
     private SeekBar seekX, seekY, seekW, seekH, seekAlpha;
-    private Button testBtn, stopBtn;
+    private Button testBtn, stopBtn, permissionButton;
 
     private CastController controller;
     private DisplayTarget targetDisplay;
     private Display targetDisplayObj;
     private String pendingPackage;
     private boolean projecting;
+    private boolean projectionPermissionPending;
+    private boolean mediaProjectionGranted;
+    private boolean mediaProjectionRejected;
+    private boolean startupPermissionPending;
+    private boolean startupPermissionsRequested;
+    private boolean startTestAfterProjection;
+    private boolean projectionAfterOverlay;
+    private boolean displayListInitialized;
+    private int launchableAppCount = -1;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -86,8 +102,14 @@ public class MainActivity extends Activity {
             displayEnumerator = new DisplayEnumerator(this);
 
             statusText = findViewById(R.id.statusText);
+            permissionStatusText = findViewById(R.id.permissionStatusText);
+            permissionSummaryText = findViewById(R.id.permissionSummaryText);
+            permissionButton = findViewById(R.id.permissionButton);
             appList = findViewById(R.id.appList);
+            appList.setEmptyView(findViewById(R.id.emptyAppList));
             displaySpinner = findViewById(R.id.displaySpinner);
+            controlsContent = findViewById(R.id.controlsContent);
+            findViewById(R.id.controlCard).setOnClickListener(v -> toggleControls());
             seekX = findViewById(R.id.seekX);
             seekY = findViewById(R.id.seekY);
             seekW = findViewById(R.id.seekW);
@@ -97,6 +119,7 @@ public class MainActivity extends Activity {
             stopBtn = findViewById(R.id.stopBtn);
             Button logBtn = findViewById(R.id.logBtn);
 
+            permissionButton.setOnClickListener(v -> onPermissionButtonClicked());
             testBtn.setOnClickListener(v -> onTestClicked());
             stopBtn.setOnClickListener(v -> stopProjection("手动停止"));
             logBtn.setOnClickListener(v -> showLogs());
@@ -114,19 +137,28 @@ public class MainActivity extends Activity {
             seekH.setOnSeekBarChangeListener(sliderListener);
             seekAlpha.setOnSeekBarChangeListener(sliderListener);
 
-            ensureOverlayPermission();
             pickTargetDisplay();
+            displayListInitialized = true;
             loadAppList();
+            refreshPermissionStatus();
         } catch (Throwable t) {
             AppLog.e("MainActivity", "onCreate 初始化异常", t);
             Toast.makeText(this, "初始化异常: " + t.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
+    private void toggleControls() {
+        if (controlsContent == null) return;
+        controlsContent.setVisibility(controlsContent.getVisibility() == View.VISIBLE
+                ? View.GONE : View.VISIBLE);
+    }
+
     private void showLogs() {
         try {
             java.io.File[] files = AppLog.listLogs();
-            StringBuilder sb = new StringBuilder("日志目录: /sdcard/Download/clusterprojector/\n\n");
+            StringBuilder sb = new StringBuilder("优先日志目录: /sdcard/Download/clusterprojector/\n"
+                    + "兜底日志目录: Android/data/" + getPackageName()
+                    + "/files/clusterprojector-logs/\n\n");
             if (files.length == 0) {
                 sb.append("暂无日志文件");
             } else {
@@ -154,30 +186,45 @@ public class MainActivity extends Activity {
     private void loadAppList() {
         try {
             PackageManager pm = getPackageManager();
-            List<ApplicationInfo> installed = pm.getInstalledApplications(PackageManager.GET_META_DATA);
+            Intent launcherIntent = new Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_LAUNCHER);
+            List<ResolveInfo> launchableApps = pm.queryIntentActivities(launcherIntent, 0);
             List<AppEntry> entries = new ArrayList<>();
-            for (ApplicationInfo info : installed) {
-                if (info.packageName.equals(getPackageName())) continue;
-                if (pm.getLaunchIntentForPackage(info.packageName) == null) continue;
+            java.util.HashSet<String> seenPackages = new java.util.HashSet<>();
+            for (ResolveInfo info : launchableApps) {
+                String packageName = info.activityInfo != null && info.activityInfo.applicationInfo != null
+                        ? info.activityInfo.applicationInfo.packageName : null;
+                if (packageName == null || packageName.equals(getPackageName())
+                        || !seenPackages.add(packageName)) {
+                    continue;
+                }
+                if (pm.getLaunchIntentForPackage(packageName) == null) continue;
                 entries.add(new AppEntry(
-                        info.packageName,
-                        pm.getApplicationLabel(info).toString(),
-                        pm.getApplicationIcon(info)));
+                        packageName,
+                        info.loadLabel(pm).toString(),
+                        info.loadIcon(pm)));
             }
             java.util.Collections.sort(entries, (a, b) -> a.label.compareToIgnoreCase(b.label));
             appList.setAdapter(new AppListAdapter(entries));
+            launchableAppCount = entries.size();
             AppLog.i("MainActivity", "已加载应用列表: " + entries.size());
+            refreshPermissionStatus();
             appList.setOnItemClickListener((parent, view, pos, id) -> {
                 AppEntry entry = (AppEntry) parent.getItemAtPosition(pos);
                 pendingPackage = entry.packageName;
+                startTestAfterProjection = false;
                 AppLog.i("MainActivity", "选择应用: " + entry.packageName);
-                if (projecting && controller != null && controller.isVirtualReady()) {
+                // 投屏会话已经存在时，即使正在切换/降级，也交给 CastController 排队，
+                // 不应该再次弹出 MediaProjection 授权框。
+                if (projecting && controller != null && controller.isRunning()) {
                     controller.launchApp(entry.packageName);
                 } else {
                     requestProjection();
                 }
             });
         } catch (Throwable t) {
+            launchableAppCount = 0;
+            refreshPermissionStatus();
             AppLog.e("MainActivity", "loadAppList 异常", t);
         }
     }
@@ -220,11 +267,21 @@ public class MainActivity extends Activity {
         displaySpinner.setAdapter(adapter);
 
         int preferred = -1;
-        for (int i = 0; i < displays.size(); i++) {
-            DisplayTarget item = displays.get(i);
-            if (item.getScore() >= 80) {
-                preferred = i;
-                break;
+        if (targetDisplay != null) {
+            for (int i = 0; i < displays.size(); i++) {
+                if (displays.get(i).getDisplayId() == targetDisplay.getDisplayId()) {
+                    preferred = i;
+                    break;
+                }
+            }
+        }
+        if (preferred < 0) {
+            for (int i = 0; i < displays.size(); i++) {
+                DisplayTarget item = displays.get(i);
+                if (item.getScore() >= 80) {
+                    preferred = i;
+                    break;
+                }
             }
         }
         if (preferred < 0) {
@@ -249,31 +306,213 @@ public class MainActivity extends Activity {
         });
     }
 
+    /** 首屏展示完整权限状态；缺失项给出直达设置或重新授权入口。 */
+    private void refreshPermissionStatus() {
+        if (permissionStatusText == null || permissionButton == null) return;
+
+        boolean overlayGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                || Settings.canDrawOverlays(this);
+        List<String> optionalMissing = collectOptionalRuntimePermissions();
+        boolean appListMissing = launchableAppCount == 0;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(overlayGranted ? "✅ 悬浮窗：已授予（仪表窗口必需）"
+                : "❌ 悬浮窗：未授予（仪表窗口必需）").append('\n');
+
+        if (mediaProjectionGranted) {
+            sb.append("✅ 投屏授权：本次运行已获取\n");
+        } else if (mediaProjectionRejected) {
+            sb.append("❌ 投屏授权：未完成，点按钮或测试投屏可再次发起系统确认\n");
+        } else {
+            sb.append("ℹ️ 投屏授权：开始投屏时需要在系统弹窗中确认\n");
+        }
+
+        if (optionalMissing.isEmpty()) {
+            sb.append("✅ 通知/日志：已就绪（不影响核心投屏）\n");
+        } else {
+            sb.append("⚠️ 通知/日志：未授予（可选，拒绝不影响投屏）\n");
+        }
+
+        if (launchableAppCount < 0) {
+            sb.append("⏳ 应用列表：正在加载...\n");
+        } else if (appListMissing) {
+            sb.append("❌ 应用列表：未获取到可启动应用，请到应用详情允许“获取应用列表”\n");
+        } else {
+            sb.append("✅ 应用列表：已发现 ").append(launchableAppCount).append(" 个可启动应用\n");
+        }
+        if (isMiuiLikeRom()) {
+            sb.append("ℹ️ MIUI/HyperOS：如列表不全，请到应用详情检查“获取应用列表”\n");
+        }
+
+        boolean showDetails = !overlayGranted || mediaProjectionRejected || appListMissing
+                || !optionalMissing.isEmpty() || launchableAppCount < 0 || isMiuiLikeRom();
+        permissionStatusText.setVisibility(showDetails ? View.VISIBLE : View.GONE);
+        permissionStatusText.setText(sb.toString().trim());
+
+        String summary;
+        int summaryColor;
+        if (!overlayGranted) {
+            summary = "缺少悬浮窗权限";
+            summaryColor = 0xFFFF6B6B;
+            permissionButton.setText("去授予悬浮窗权限");
+        } else if (mediaProjectionRejected) {
+            summary = "投屏授权未完成";
+            summaryColor = 0xFFFF6B6B;
+            permissionButton.setText("重新发起投屏授权");
+        } else if (appListMissing) {
+            summary = "应用列表不可用";
+            summaryColor = 0xFFFF6B6B;
+            permissionButton.setText("打开应用详情，允许应用列表");
+        } else if (!optionalMissing.isEmpty()) {
+            summary = "通知/日志可选权限未开";
+            summaryColor = 0xFFFFC857;
+            permissionButton.setText("授予通知/日志可选权限");
+        } else if (launchableAppCount < 0) {
+            summary = "应用列表加载中";
+            summaryColor = 0xFFFFC857;
+            permissionButton.setText("重新检查权限");
+        } else if (isMiuiLikeRom()) {
+            summary = "核心权限就绪";
+            summaryColor = 0xFF4ADE80;
+            permissionButton.setText("打开应用详情检查手机权限");
+        } else {
+            summary = "核心权限就绪";
+            summaryColor = 0xFF4ADE80;
+            permissionButton.setText("重新检查权限");
+        }
+        permissionSummaryText.setText(summary);
+        permissionSummaryText.setTextColor(summaryColor);
+    }
+
+    private void onPermissionButtonClicked() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            ensureOverlayPermission();
+            return;
+        }
+
+        if (mediaProjectionRejected) {
+            // MediaProjection 没有普通应用可直接进入的设置页，只能再次发起系统授权弹窗。
+            pendingPackage = null;
+            startTestAfterProjection = true;
+            requestProjection();
+            return;
+        }
+
+        if (launchableAppCount == 0) {
+            openApplicationDetails();
+            return;
+        }
+
+        List<String> missing = collectOptionalRuntimePermissions();
+        if (!missing.isEmpty()) {
+            if (startupPermissionsRequested && shouldOpenSettingsForRuntimePermissions(missing)) {
+                openApplicationDetails();
+                return;
+            }
+            startupPermissionPending = true;
+            requestPermissions(missing.toArray(new String[0]), REQ_STARTUP_PERMISSIONS);
+            return;
+        }
+
+        if (isMiuiLikeRom()) {
+            openApplicationDetails();
+            return;
+        }
+        Toast.makeText(this, "核心权限已就绪，可以选择测试画面或应用开始投屏", Toast.LENGTH_SHORT).show();
+    }
+
+    private boolean isMiuiLikeRom() {
+        String fingerprint = (Build.BRAND + " " + Build.MANUFACTURER + " " + Build.DISPLAY)
+                .toLowerCase(Locale.ROOT);
+        return fingerprint.contains("xiaomi") || fingerprint.contains("redmi")
+                || fingerprint.contains("miui") || fingerprint.contains("hyperos");
+    }
+
+    private List<String> collectOptionalRuntimePermissions() {
+        List<String> missing = new ArrayList<>();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q
+                && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+            missing.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                && Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2
+                && checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+            missing.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            missing.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+        return missing;
+    }
+
+    private boolean shouldOpenSettingsForRuntimePermissions(List<String> permissions) {
+        for (String permission : permissions) {
+            // 首次请求前 shouldShow=false 不代表永久拒绝；这里只在本界面已经发起过请求后判断。
+            if (!shouldShowRequestPermissionRationale(permission)) return true;
+        }
+        return false;
+    }
+
+    private void openApplicationDetails() {
+        try {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            intent.setData(Uri.parse("package:" + getPackageName()));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+            Toast.makeText(this, "请在应用详情中检查权限，尤其是“获取应用列表”", Toast.LENGTH_LONG).show();
+        } catch (Throwable t) {
+            AppLog.e("MainActivity", "打开应用详情失败", t);
+            Toast.makeText(this, "无法打开应用详情：" + t.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions,
+            int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        for (int i = 0; i < permissions.length && i < grantResults.length; i++) {
+            boolean granted = grantResults[i] == PackageManager.PERMISSION_GRANTED;
+            AppLog.i("MainActivity", "权限 " + permissions[i] + "="
+                    + (granted ? "GRANTED" : "DENIED"));
+        }
+
+        if (requestCode == REQ_STARTUP_PERMISSIONS && startupPermissionPending) {
+            startupPermissionPending = false;
+            startupPermissionsRequested = true;
+            refreshPermissionStatus();
+            return;
+        }
+        if (requestCode == REQ_PROJECTION_PERMISSIONS && projectionPermissionPending) {
+            projectionPermissionPending = false;
+            // 通知/日志权限被拒绝时仍允许投屏，只是通知或公共日志可能不可用。
+            launchProjectionIntent();
+        }
+    }
+
     private void ensureOverlayPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "请授予“显示在其他应用上层”权限，否则无法在仪表盘创建窗口",
+                    Toast.LENGTH_LONG).show();
             startActivityForResult(new Intent(
                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:" + getPackageName())), REQ_OVERLAY);
         }
     }
 
-    private void requestProjection() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_LONG).show();
-            ensureOverlayPermission();
-            return;
-        }
-        if (targetDisplay == null || targetDisplay.isDefault()) {
-            Toast.makeText(this, "未选择仪表 Display（FX11 应为 1920x532）", Toast.LENGTH_LONG).show();
-            return;
-        }
-        targetDisplayObj = displayEnumerator.resolveDisplay(targetDisplay);
-        if (targetDisplayObj == null) {
-            Toast.makeText(this, "当前进程看不到 Display " + targetDisplay.getDisplayId()
-                    + "，可能被车机多屏策略限制", Toast.LENGTH_LONG).show();
-            AppLog.e("MainActivity", "Display 不可见: " + targetDisplay);
-            return;
-        }
+    private boolean prepareProjectionPermissions() {
+        List<String> missing = collectOptionalRuntimePermissions();
+        if (missing.isEmpty()) return true;
+        projectionPermissionPending = true;
+        AppLog.i("MainActivity", "投屏前申请权限: " + missing);
+        requestPermissions(missing.toArray(new String[0]), REQ_PROJECTION_PERMISSIONS);
+        return false;
+    }
+
+    private void launchProjectionIntent() {
         if (projectionManager == null) {
             Toast.makeText(this, "MediaProjection 服务不可用", Toast.LENGTH_LONG).show();
             return;
@@ -281,14 +520,60 @@ public class MainActivity extends Activity {
         startActivityForResult(projectionManager.createScreenCaptureIntent(), REQ_PROJECTION);
     }
 
+    private void requestProjection() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            // 从应用点击或测试按钮进来时，保留本次动作；授权返回后继续弹 MediaProjection。
+            projectionAfterOverlay = true;
+            Toast.makeText(this, "请先授予悬浮窗权限，授权后会继续发起投屏", Toast.LENGTH_LONG).show();
+            ensureOverlayPermission();
+            return;
+        }
+        if (targetDisplay == null || targetDisplay.isDefault()) {
+            clearPendingProjectionAction();
+            Toast.makeText(this, "未选择仪表 Display（FX11 应为 1920x532）", Toast.LENGTH_LONG).show();
+            return;
+        }
+        targetDisplayObj = displayEnumerator.resolveDisplay(targetDisplay);
+        if (targetDisplayObj == null) {
+            clearPendingProjectionAction();
+            Toast.makeText(this, "当前进程看不到 Display " + targetDisplay.getDisplayId()
+                    + "，可能被车机多屏策略限制", Toast.LENGTH_LONG).show();
+            AppLog.e("MainActivity", "Display 不可见: " + targetDisplay);
+            return;
+        }
+        if (!prepareProjectionPermissions()) return;
+        launchProjectionIntent();
+    }
+
+    private void clearPendingProjectionAction() {
+        pendingPackage = null;
+        startTestAfterProjection = false;
+        projectionAfterOverlay = false;
+    }
+
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_OVERLAY) return;
+        if (requestCode == REQ_OVERLAY) {
+            refreshPermissionStatus();
+            if (projectionAfterOverlay
+                    && (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this))) {
+                projectionAfterOverlay = false;
+                requestProjection();
+            }
+            return;
+        }
         if (requestCode == REQ_PROJECTION) {
             if (resultCode != RESULT_OK || data == null) {
-                setStatus("录屏权限被拒绝");
+                clearPendingProjectionAction();
+                mediaProjectionGranted = false;
+                mediaProjectionRejected = true;
+                refreshPermissionStatus();
+                setStatus("录屏权限被拒绝，可在权限卡片重新授权");
                 return;
             }
+            mediaProjectionGranted = true;
+            mediaProjectionRejected = false;
+            refreshPermissionStatus();
             startProjectionService(resultCode, data);
         }
     }
@@ -303,8 +588,7 @@ public class MainActivity extends Activity {
 
                 @Override public void onError(String message) {
                     runOnUiThread(() -> {
-                        projecting = false;
-                        setStatus("投屏服务失败: " + message);
+                        stopProjection("投屏服务失败: " + message);
                         Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
                     });
                 }
@@ -343,9 +627,17 @@ public class MainActivity extends Activity {
             if (controller != null) controller.stop();
             controller = new CastController(this, targetDisplay, targetDisplayObj);
             controller.setListener(new CastController.Listener() {
-                @Override public void onVirtualDisplayReady(int virtualDisplayId) {
-                    runOnUiThread(() -> setStatus("仪表虚拟屏已就绪: vd=" + virtualDisplayId
-                            + "，目标 Display " + targetDisplay.getDisplayId()));
+                @Override public void onVirtualDisplayReady(int mode, int virtualDisplayId) {
+                    runOnUiThread(() -> setStatus(mode == CastController.MODE_MIRROR
+                            ? "兼容镜像已就绪：捕获中控 Display 0"
+                            : "直出虚拟屏已就绪: vd=" + virtualDisplayId));
+                }
+
+                @Override public void onModeChanged(int mode, String reason) {
+                    runOnUiThread(() -> {
+                        applyDefaultSliderLayout(mode);
+                        setStatus((mode == CastController.MODE_MIRROR ? "已切换兼容镜像模式：" : "直出模式：") + reason);
+                    });
                 }
 
                 @Override public void onAppLaunched(String packageName, boolean success, String error) {
@@ -365,12 +657,17 @@ public class MainActivity extends Activity {
 
             controller.start(projection);
             projecting = true;
-            applySliders();
+            if (controlsContent != null) controlsContent.setVisibility(View.VISIBLE);
+            displaySpinner.setEnabled(false);
+            applyDefaultSliderLayout(CastController.MODE_DIRECT);
             if (pendingPackage != null) {
                 String pkg = pendingPackage;
                 pendingPackage = null;
                 controller.launchApp(pkg);
+            } else if (startTestAfterProjection) {
+                controller.launchTestScreen(TestCastActivity.class);
             }
+            startTestAfterProjection = false;
             setStatus("仪表 Surface 已创建，等待虚拟屏...");
         } catch (Throwable t) {
             AppLog.e("MainActivity", "beginCasting 异常", t);
@@ -381,7 +678,10 @@ public class MainActivity extends Activity {
 
     private void onTestClicked() {
         if (!projecting || controller == null) {
-            Toast.makeText(this, "请先选择一个应用开始投屏", Toast.LENGTH_SHORT).show();
+            // 测试画面也可以作为第一次投屏入口，无需先点某个第三方 App。
+            pendingPackage = null;
+            startTestAfterProjection = true;
+            requestProjection();
             return;
         }
         boolean queued = controller.launchTestScreen(TestCastActivity.class);
@@ -394,12 +694,40 @@ public class MainActivity extends Activity {
             controller = null;
         }
         projecting = false;
+        startTestAfterProjection = false;
+        mediaProjectionGranted = false;
+        mediaProjectionRejected = false;
+        displaySpinner.setEnabled(true);
         try {
             startService(new Intent(this, ScreenCastService.class)
                     .setAction(ScreenCastService.ACTION_STOP));
         } catch (Throwable ignored) {
         }
         setStatus(reason == null ? "已停止" : reason);
+        refreshPermissionStatus();
+    }
+
+    private void applyDefaultSliderLayout(int mode) {
+        if (mode == CastController.MODE_MIRROR) {
+            // 完整 contain 中控竖屏：高度填满仪表屏，宽度按中控宽高比计算，水平居中。
+            android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
+            getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
+            int sourceWidth = metrics.widthPixels > 0 ? metrics.widthPixels : 1440;
+            int sourceHeight = metrics.heightPixels > 0 ? metrics.heightPixels : 1920;
+            int mirrorWidth = Math.min(targetDisplay.getWidth(),
+                    Math.round(targetDisplay.getHeight() * sourceWidth / (float) sourceHeight));
+            seekX.setProgress(50);
+            seekY.setProgress(0);
+            seekW.setProgress(Math.round(mirrorWidth * 100f / targetDisplay.getWidth()));
+            seekH.setProgress(100);
+        } else {
+            // 直出默认对齐实车 960x266 居中区域。
+            seekX.setProgress(50);
+            seekY.setProgress(50);
+            seekW.setProgress(50);
+            seekH.setProgress(50);
+        }
+        applySliders();
     }
 
     private void applySliders() {
@@ -423,7 +751,12 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
-        if (displayEnumerator != null) pickTargetDisplay();
+        // 不在这里重建 Spinner：从悬浮窗/录屏授权页返回时，应保留用户手动选择的 Display。
+        if (!displayListInitialized && displayEnumerator != null) {
+            pickTargetDisplay();
+            displayListInitialized = true;
+        }
+        refreshPermissionStatus();
     }
 
     @Override protected void onDestroy() {
@@ -433,5 +766,12 @@ public class MainActivity extends Activity {
             controller = null;
         }
         ScreenCastService.setProjectionListener(null);
+        // 当前 CastController 仍绑定 Activity 生命周期；退出界面时一并释放投影会话，
+        // 避免 Service/MediaProjection 残留。后续若把控制器移入 Service，可移除此处停止逻辑。
+        try {
+            startService(new Intent(this, ScreenCastService.class)
+                    .setAction(ScreenCastService.ACTION_STOP));
+        } catch (Throwable ignored) {
+        }
     }
 }
