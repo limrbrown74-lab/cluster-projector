@@ -55,6 +55,15 @@ public class ScreenCastService extends Service {
             return START_NOT_STICKY;
         }
 
+        // Android 14+ 强制要求：先启动 mediaProjection 类型的前台服务，
+        // 再调用 getMediaProjection()，否则抛 SecurityException。
+        Notification n = buildNotification();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+        } else {
+            startForeground(NOTIFICATION_ID, n);
+        }
+
         int resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0);
         Intent resultData = intent.getParcelableExtra(EXTRA_RESULT_DATA);
         if (resultData != null) {
@@ -63,13 +72,6 @@ public class ScreenCastService extends Service {
             if (mgr != null) {
                 mediaProjection = mgr.getMediaProjection(resultCode, resultData);
             }
-        }
-
-        Notification n = buildNotification();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
-        } else {
-            startForeground(NOTIFICATION_ID, n);
         }
         return START_NOT_STICKY;
     }
