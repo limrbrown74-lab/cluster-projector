@@ -43,13 +43,16 @@ public class ScreenCastService extends Service {
 
     @Override public void onCreate() {
         super.onCreate();
+        AppLog.i("ScreenCastService", "onCreate");
         createChannel();
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        try {
         if (intent == null) return START_NOT_STICKY;
         String action = intent.getAction();
         if (ACTION_STOP.equals(action)) {
+            AppLog.i("ScreenCastService", "ACTION_STOP");
             stopProjection();
             stopSelf();
             return START_NOT_STICKY;
@@ -63,6 +66,7 @@ public class ScreenCastService extends Service {
         } else {
             startForeground(NOTIFICATION_ID, n);
         }
+        AppLog.i("ScreenCastService", "startForeground OK");
 
         int resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0);
         Intent resultData = intent.getParcelableExtra(EXTRA_RESULT_DATA);
@@ -71,9 +75,15 @@ public class ScreenCastService extends Service {
                     (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
             if (mgr != null) {
                 mediaProjection = mgr.getMediaProjection(resultCode, resultData);
+                AppLog.i("ScreenCastService", "getMediaProjection OK: " + (mediaProjection != null));
             }
         }
         return START_NOT_STICKY;
+        } catch (Throwable t) {
+            AppLog.e("ScreenCastService", "onStartCommand 异常", t);
+            stopSelf();
+            return START_NOT_STICKY;
+        }
     }
 
     private void stopProjection() {

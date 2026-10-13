@@ -57,6 +57,11 @@ public class MainActivity extends Activity {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // 安装全局崩溃捕获 + 初始化日志
+        CrashHandler.install();
+        AppLog.i("MainActivity", "onCreate start, displayId=" + getDisplay().getDisplayId());
+
+        try {
         // If we were launched onto a non-default display (i.e. the user projected
         // this very app onto the cluster), show a simple placeholder instead of
         // re-initializing the whole control panel. The center-stack instance keeps
@@ -91,9 +96,11 @@ public class MainActivity extends Activity {
         seekAlpha = findViewById(R.id.seekAlpha);
         testBtn = findViewById(R.id.testBtn);
         stopBtn = findViewById(R.id.stopBtn);
+        Button logBtn = findViewById(R.id.logBtn);
 
         testBtn.setOnClickListener(v -> onTestClicked());
         stopBtn.setOnClickListener(v -> stopProjection());
+        logBtn.setOnClickListener(v -> showLogs());
 
         SeekBar.OnSeekBarChangeListener sliderListener = new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
@@ -111,16 +118,46 @@ public class MainActivity extends Activity {
         ensureOverlayPermission();
         pickTargetDisplay();
         loadAppList();
+        } catch (Throwable t) {
+            AppLog.e("MainActivity", "onCreate 初始化异常", t);
+            Toast.makeText(this, "初始化异常: " + t.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void showLogs() {
+        try {
+            java.io.File[] files = AppLog.listLogs();
+            StringBuilder sb = new StringBuilder("日志目录: /sdcard/Download/clusterprojector/\n\n");
+            if (files.length == 0) {
+                sb.append("暂无日志文件");
+            } else {
+                for (java.io.File f : files) {
+                    sb.append(f.getName()).append("  (").append(f.length() / 1024).append("KB)\n");
+                }
+            }
+            sb.append("\n点击确定后复制到剪贴板");
+            android.app.AlertDialog.Builder b = new android.app.AlertDialog.Builder(this);
+            b.setTitle("日志文件").setMessage(sb.toString())
+                    .setPositiveButton("确定", null)
+                    .setNeutralButton("打开文件管理器", (d, w) -> {
+                        Intent i = new Intent(android.content.Intent.ACTION_VIEW);
+                        i.setData(android.net.Uri.parse("content://com.android.externalstorage.documents/document/primary%3ADownload%2Fclusterprojector"));
+                        try { startActivity(i); } catch (Exception ignored) {}
+                    })
+                    .show();
+        } catch (Throwable t) {
+            AppLog.e("MainActivity", "showLogs 异常", t);
+        }
     }
 
     // -------------------------------------------------- app list
 
     private void loadAppList() {
+        try {
         PackageManager pm = getPackageManager();
         List<ApplicationInfo> installed = pm.getInstalledApplications(PackageManager.GET_META_DATA);
         List<AppEntry> entries = new ArrayList<>();
         for (ApplicationInfo info : installed) {
-            // Skip ourselves and system-only apps without a launcher icon.
             if (info.packageName.equals(getPackageName())) continue;
             Intent launch = pm.getLaunchIntentForPackage(info.packageName);
             if (launch == null) continue;
@@ -130,11 +167,16 @@ public class MainActivity extends Activity {
                     pm.getApplicationIcon(info)));
         }
         appList.setAdapter(new AppListAdapter(entries));
+        AppLog.i("MainActivity", "已加载应用列表: " + entries.size() + " 个");
         appList.setOnItemClickListener((parent, view, pos, id) -> {
             AppEntry entry = (AppEntry) parent.getItemAtPosition(pos);
             pendingPackage = entry.packageName;
+            AppLog.i("MainActivity", "选择应用投屏: " + entry.packageName);
             requestProjection();
         });
+        } catch (Throwable t) {
+            AppLog.e("MainActivity", "loadAppList 异常", t);
+        }
     }
 
     private static class AppEntry {
@@ -234,6 +276,8 @@ public class MainActivity extends Activity {
     }
 
     private void startProjection(int resultCode, Intent data) {
+        try {
+        AppLog.i("MainActivity", "startProjection, target=" + targetDisplay);
         Intent svc = new Intent(this, ScreenCastService.class);
         svc.setAction(ScreenCastService.ACTION_START);
         svc.putExtra(ScreenCastService.EXTRA_RESULT_CODE, resultCode);
@@ -262,8 +306,13 @@ public class MainActivity extends Activity {
                 setStatus("投屏中 → " + targetDisplay.getName());
             } else {
                 setStatus("服务未就绪，请重试");
+                AppLog.w("MainActivity", "ScreenCastService.getProjection() 返回 null");
             }
         }, 300);
+        } catch (Throwable t) {
+            AppLog.e("MainActivity", "startProjection 异常", t);
+            Toast.makeText(this, "启动投屏异常: " + t.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
     private void onTestClicked() {

@@ -136,6 +136,16 @@
         android:textSize="14sp"
         android:textColor="#FF6B6B"
         android:background="@drawable/btn_secondary"
+        android:layout_marginBottom="8dp" />
+
+    <Button
+        android:id="@+id/logBtn"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:text="查看日志（保存于 Download/clusterprojector/）"
+        android:textSize="12sp"
+        android:textColor="#8B8FA3"
+        android:background="@drawable/btn_secondary"
         android:layout_marginBottom="12dp" />
 
     <!-- App List header label -->
