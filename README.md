@@ -17,8 +17,8 @@
 
 ```text
 applicationId = org.clusterprojector.app
-versionCode   = 7
-versionName   = 1.2.4-fx11
+versionCode   = 8
+versionName   = 1.2.5-fx11
 minSdk        = 23
 targetSdk     = 28
 ```
@@ -105,6 +105,8 @@ targetSdk     = 28
 - 兜底目录：`/Android/data/org.clusterprojector.app/files/clusterprojector-logs/`
 
 没有公共存储权限时自动使用应用专属目录，不影响核心投屏。
+
+从 v1.2.5 起，点击首页“查看日志文件”后可直接选择“分享完整日志”。App 会把设备信息、权限状态、可见 Display、投屏控制器状态、全部本地日志和崩溃堆栈打包为一个 `.txt`，通过 Android 系统分享面板发送到微信、文件传输或蓝牙，不需要先接电脑。
 
 ---
 
@@ -210,7 +212,8 @@ cluster-projector/
 │       │   ├── ScreenCastService.java         # MediaProjection 前台服务
 │       │   ├── CastAccessibilityService.java  # 可选预留，当前核心链路不依赖
 │       │   ├── TestCastActivity.java          # 仪表链路测试画面
-│       │   ├── AppLog.java                    # 本地诊断日志
+│       │   ├── AppLog.java                    # 本地诊断日志和诊断包导出
+│       │   ├── LogShareProvider.java          # 只读日志分享 Provider
 │       │   ├── ClusterApp.java                # Application，初始化日志
 │       │   ├── CrashHandler.java              # 崩溃记录
 │       │   └── BootUpReceiver.java            # 可选开机入口
@@ -228,7 +231,8 @@ cluster-projector/
 │       ├── OverlayWindowHost.java             # 仪表 Display 上的窗口宿主
 │       ├── VirtualScreenHost.java             # 直出 VirtualDisplay
 │       ├── MirrorCaptureHost.java             # 中控 Display 0 捕获
-│       ├── MirrorGlSurfaceView.java           # 无编码 OpenGL 镜像渲染
+│       ├── MirrorGlSurfaceView.java           # 无编码 OpenGL 镜像渲染和首帧日志
+│       ├── ClusterLog.java                    # 核心库本地日志
 │       └── WindowGeometry.java                # X/Y/宽/高数据
 │
 └── README.md
@@ -301,7 +305,8 @@ adb shell appops set org.clusterprojector.app SYSTEM_ALERT_WINDOW allow
 8. 展开“图层控制”，调整位置、大小和透明度。
 9. 确认测试画面正常后，再点击应用列表中的定制版高德地图或 ICCOA CarLink。
 10. 最后再测试普通第三方 App。
-11. 点击“停止投屏”释放会话；点击“查看日志文件”确认日志路径。
+11. 如果仪表无画面，不要先重启 App，点击“查看日志文件 → 分享完整日志”导出本次诊断包。
+12. 点击“停止投屏”释放会话。
 
 手机只有 Display 0 时，应用会阻止误启动投屏，这是保护逻辑，不代表车机链路异常。
 
@@ -382,15 +387,25 @@ adb logcat -s ClusterDisplay:D ClusterOverlay:D ClusterVirtual:D ClusterCast:D C
 
 ```text
 ClusterOverlay: overlay added to display=3 ...
-ClusterVirtual: created 1920x532@320 id=...
+ClusterOverlay: direct surfaceChanged 1920x532 ...
+ClusterVirtual: created 1920x532@320 id=... state=ON ...
+ClusterVirtual: startActivity returned without exception ... note=no_exception_does_not_prove_actual_display
+ClusterVirtual: system diagnostics ...
 ```
+
+`startActivity` 不抛异常只能证明调用被系统接受，不能证明目标 Activity 真的留在虚拟 Display。v1.2.5 会追加最佳努力的系统状态片段，用于判断是否被静默重定向回 Display 0。
 
 ### 自动降级的典型日志
 
 ```text
 ClusterCast: fallback to mirror: ...
-ClusterMirror: mirror capture started: 1440x1920@160
+ClusterOverlay: show MIRROR GL view ...
+ClusterMirror: mirror capture started: 1440x1920@160 ...
+ClusterMirrorGL: first frame rendered to dashboard surface ...
+ClusterCast: mirror first frame received (FIRST) ...
 ```
+
+如果 8 秒内镜像第一帧没有到达，App 会明确提示并要求分享完整诊断日志。
 
 ### 实车重点观察
 
@@ -477,6 +492,18 @@ controller.setAlpha(1.0f);
 
 ## 版本记录
 
+### 1.2.5-fx11 / versionCode 8
+
+- 授权成功但仪表无画面的专项诊断版；
+- 全链路记录 Display 解析、窗口 addView、窗口实际 Display、Surface 创建/销毁、VirtualDisplay 状态、Activity 启动结果、自动降级、GL 输入 Surface 和第一帧；
+- “查看日志文件”弹窗新增“分享完整日志”，通过系统分享面板导出包含设备、权限、Display、控制器状态、普通日志和崩溃堆栈的 `.txt` 诊断包；
+- 镜像模式新增第一帧状态反馈和 8 秒未到达提示；
+- 直出启动后追加 VirtualDisplay 状态探测和最佳努力系统诊断片段，用于识别“不报错但回到 Display 0”的车机策略。
+
+### 1.2.4-fx11 / versionCode 7
+
+- 兼容部分 ecarx Android 11 framework 缺失 `Context.createWindowContext(Display,int,Bundle)` 的情况；
+- 标准 WindowContext 不可用时回退到 DisplayContext，避免授权后立即 `NoSuchMethodError` 崩溃。
 
 ### 1.2.3-fx11 / versionCode 6
 

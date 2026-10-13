@@ -6,7 +6,6 @@ import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
 import android.view.Surface;
 
 import java.nio.ByteBuffer;
@@ -53,6 +52,7 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
     public interface Callback {
         void onInputSurfaceReady(Surface surface);
         void onInputSurfaceDestroyed();
+        void onFirstFrame();
     }
 
     public MirrorGlSurfaceView(Context context, int sourceWidth, int sourceHeight) {
@@ -63,6 +63,8 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
         renderer = new RendererImpl(sourceWidth, sourceHeight);
         setRenderer(renderer);
         setRenderMode(RENDERMODE_WHEN_DIRTY);
+        ClusterLog.i(TAG, "ctor: source=" + sourceWidth + "x" + sourceHeight
+                + " GLES2 RENDERMODE_WHEN_DIRTY");
     }
 
     public void setMirrorCallback(Callback value) {
@@ -94,6 +96,12 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
         private int viewportWidth;
         private int viewportHeight;
         private boolean inputReady;
+        private long frameAvailableCount;
+        private long drawnFrameCount;
+        private boolean firstFrameAvailableLogged;
+        private boolean firstDrawnFrameLogged;
+        private int lastGlError;
+        private long lastPeriodicLogMs;
 
         RendererImpl(int sourceWidth, int sourceHeight) {
             this.sourceWidth = sourceWidth;
@@ -120,6 +128,9 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
         }
 
         @Override public void onSurfaceCreated(GL10 gl, EGLConfig config) {
+            ClusterLog.i(TAG, "GL onSurfaceCreated: vendor=" + GLES20.glGetString(GLES20.GL_VENDOR)
+                    + " renderer=" + GLES20.glGetString(GLES20.GL_RENDERER)
+                    + " version=" + GLES20.glGetString(GLES20.GL_VERSION));
             program = createProgram(VERTEX_SHADER, FRAGMENT_SHADER);
             positionLocation = GLES20.glGetAttribLocation(program, "aPosition");
             textureLocation = GLES20.glGetAttribLocation(program, "aTextureCoord");
@@ -129,6 +140,7 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
             int[] textures = new int[1];
             GLES20.glGenTextures(1, textures, 0);
             textureId = textures[0];
+            ClusterLog.i(TAG, "GL program=" + program + " texture=" + textureId);
             GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId);
             GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
                     GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
@@ -141,9 +153,24 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
 
             surfaceTexture = new android.graphics.SurfaceTexture(textureId);
             surfaceTexture.setDefaultBufferSize(sourceWidth, sourceHeight);
-            surfaceTexture.setOnFrameAvailableListener(st -> requestRender());
+            surfaceTexture.setOnFrameAvailableListener(st -> {
+                frameAvailableCount++;
+                long now = android.os.SystemClock.uptimeMillis();
+                if (!firstFrameAvailableLogged) {
+                    firstFrameAvailableLogged = true;
+                    ClusterLog.i(TAG, "first SurfaceTexture frame available");
+                } else if (frameAvailableCount % 300 == 0) {
+                    ClusterLog.i(TAG, "frame available count=" + frameAvailableCount
+                            + " drawn=" + drawnFrameCount + " glError=0x"
+                            + Integer.toHexString(lastGlError));
+                    lastPeriodicLogMs = now;
+                }
+                requestRender();
+            });
             inputSurface = new Surface(surfaceTexture);
             inputReady = true;
+            ClusterLog.i(TAG, "input Surface ready: valid=" + inputSurface.isValid()
+                    + " defaultBuffer=" + sourceWidth + "x" + sourceHeight);
 
             Surface readySurface = inputSurface;
             mainHandler.post(() -> {
@@ -155,10 +182,17 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
             viewportWidth = width;
             viewportHeight = height;
             GLES20.glViewport(0, 0, width, height);
+            ClusterLog.i(TAG, "GL onSurfaceChanged: viewport=" + width + "x" + height
+                    + " source=" + sourceWidth + "x" + sourceHeight);
         }
 
         @Override public void onDrawFrame(GL10 gl) {
-            if (!inputReady || surfaceTexture == null) return;
+            if (!inputReady || surfaceTexture == null) {
+                ClusterLog.w(TAG, "onDrawFrame skipped: inputReady=" + inputReady
+                        + " texture=" + (surfaceTexture != null));
+                return;
+            }
+            try {
             surfaceTexture.updateTexImage();
             surfaceTexture.getTransformMatrix(textureMatrix);
             android.opengl.Matrix.setIdentityM(vertexMatrix, 0);
@@ -184,8 +218,22 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
             GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId);
             GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uTexture"), 0);
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+            lastGlError = GLES20.glGetError();
             GLES20.glDisableVertexAttribArray(positionLocation);
             GLES20.glDisableVertexAttribArray(textureLocation);
+            drawnFrameCount++;
+            if (!firstDrawnFrameLogged) {
+                firstDrawnFrameLogged = true;
+                ClusterLog.i(TAG, "first frame rendered to dashboard surface: viewport="
+                        + viewportWidth + "x" + viewportHeight + " glError=0x"
+                        + Integer.toHexString(lastGlError));
+                if (callback != null) callback.onFirstFrame();
+            }
+            } catch (RuntimeException e) {
+                ClusterLog.e(TAG, "GL draw failed: frameAvailable=" + frameAvailableCount
+                        + " drawn=" + drawnFrameCount, e);
+                throw e;
+            }
         }
 
         /** contain 模式：完整保留中控画面，不拉伸，黑边补齐。 */
@@ -207,6 +255,8 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
         }
 
         void release() {
+            ClusterLog.i(TAG, "release GL: inputReady=" + inputReady
+                    + " frameAvailable=" + frameAvailableCount + " drawn=" + drawnFrameCount);
             if (!inputReady) return;
             inputReady = false;
             mainHandler.post(() -> {
@@ -219,7 +269,7 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
                     GLES20.glDeleteTextures(1, new int[]{textureId}, 0);
                 }
             } catch (Throwable t) {
-                Log.w(TAG, "release mirror GL resources failed", t);
+                ClusterLog.w(TAG, "release mirror GL resources failed", t);
             }
             inputSurface = null;
             surfaceTexture = null;
@@ -235,6 +285,7 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
         GLES20.glGetShaderiv(shader, GLES20.GL_COMPILE_STATUS, status, 0);
         if (status[0] == 0) {
             String log = GLES20.glGetShaderInfoLog(shader);
+            ClusterLog.e(TAG, "GL shader compile failed type=" + type + " log=" + log);
             GLES20.glDeleteShader(shader);
             throw new IllegalStateException("GL shader compile failed: " + log);
         }
@@ -252,6 +303,7 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
         GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, status, 0);
         if (status[0] == 0) {
             String log = GLES20.glGetProgramInfoLog(program);
+            ClusterLog.e(TAG, "GL program link failed log=" + log);
             GLES20.glDeleteProgram(program);
             throw new IllegalStateException("GL program link failed: " + log);
         }

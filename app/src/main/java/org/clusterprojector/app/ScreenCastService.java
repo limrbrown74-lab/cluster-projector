@@ -1,9 +1,9 @@
 package org.clusterprojector.app;
 
+import android.app.Activity;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
-import android.app.Activity;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -30,6 +30,7 @@ public class ScreenCastService extends Service {
     private static ProjectionListener listener;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private MediaProjection.Callback activeCallback;
 
     public interface ProjectionListener {
         void onReady(MediaProjection projection);
@@ -51,23 +52,31 @@ public class ScreenCastService extends Service {
 
     @Override public void onCreate() {
         super.onCreate();
-        AppLog.i("ScreenCastService", "onCreate");
+        AppLog.i("ScreenCastService", "onCreate sdk=" + Build.VERSION.SDK_INT);
         createChannel();
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        String action = intent == null ? "null" : intent.getAction();
+        AppLog.i("ScreenCastService", "onStartCommand action=" + action
+                + " startId=" + startId + " hasExistingProjection=" + (mediaProjection != null));
         try {
-            if (intent == null) return START_NOT_STICKY;
-            String action = intent.getAction();
+            if (intent == null) {
+                AppLog.w("ScreenCastService", "service restarted with null intent; do not sticky restart");
+                return START_NOT_STICKY;
+            }
             if (ACTION_STOP.equals(action)) {
-                AppLog.i("ScreenCastService", "ACTION_STOP");
-                stopProjection(false);
+                stopProjection("ACTION_STOP", false);
                 stopSelf();
                 return START_NOT_STICKY;
             }
 
             int resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0);
             Intent resultData = intent.getParcelableExtra(EXTRA_RESULT_DATA);
+            AppLog.i("ScreenCastService", "projection result: resultCode=" + resultCode
+                    + " expectedOk=" + Activity.RESULT_OK + " data=" + (resultData != null)
+                    + " action=" + (resultData == null ? null : resultData.getAction())
+                    + " component=" + (resultData == null ? null : resultData.getComponent()));
             if (resultCode != Activity.RESULT_OK || resultData == null) {
                 notifyError("MediaProjection 授权数据无效");
                 stopSelf();
@@ -82,30 +91,35 @@ public class ScreenCastService extends Service {
                 return START_NOT_STICKY;
             }
 
-            stopProjection(false);
+            stopProjection("replace old projection before new start", false);
 
             Notification notification = buildNotification();
             MediaProjection newProjection = null;
             try {
+                activeCallback = null;
                 MediaProjection.Callback projectionCallback = new MediaProjection.Callback() {
                     @Override public void onStop() {
-                        AppLog.w("ScreenCastService", "MediaProjection onStop");
-                        stopProjection(true);
+                        AppLog.w("ScreenCastService", "MediaProjection onStop from system/user");
+                        stopProjection("system projection callback", true);
                         stopSelf();
                     }
                 };
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    // Android 14+ 要求先取得 MediaProjection 并注册回调，再启动对应类型的前台服务。
+                    AppLog.i("ScreenCastService", "Android 14+ branch: projection first, foreground second");
                     newProjection = manager.getMediaProjection(resultCode, resultData);
                     if (newProjection == null) {
                         throw new IllegalStateException("getMediaProjection 返回 null");
                     }
                     newProjection.registerCallback(projectionCallback, mainHandler);
+                    AppLog.i("ScreenCastService", "startForeground begin type=mediaProjection");
                     startForeground(NOTIFICATION_ID, notification,
                             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+                    AppLog.i("ScreenCastService", "startForeground OK");
                 } else {
                     // FX11 / Android 11 保持“先前台服务、再获取投影”的兼容顺序。
+                    AppLog.i("ScreenCastService", "legacy branch: foreground first, projection second");
+                    AppLog.i("ScreenCastService", "startForeground begin");
                     startForeground(NOTIFICATION_ID, notification);
                     AppLog.i("ScreenCastService", "startForeground OK");
                     newProjection = manager.getMediaProjection(resultCode, resultData);
@@ -113,10 +127,13 @@ public class ScreenCastService extends Service {
                         throw new IllegalStateException("getMediaProjection 返回 null");
                     }
                     newProjection.registerCallback(projectionCallback, mainHandler);
+                    activeCallback = projectionCallback;
+                    AppLog.i("ScreenCastService", "projection callback registered");
                 }
 
                 mediaProjection = newProjection;
-                AppLog.i("ScreenCastService", "getMediaProjection OK");
+                AppLog.i("ScreenCastService", "getMediaProjection OK projection="
+                        + newProjection);
                 if (listener != null) listener.onReady(mediaProjection);
                 return START_NOT_STICKY;
             } catch (Throwable projectionError) {
@@ -130,7 +147,7 @@ public class ScreenCastService extends Service {
                 throw projectionError;
             }
         } catch (Throwable t) {
-            AppLog.e("ScreenCastService", "onStartCommand 异常", t);
+            AppLog.e("ScreenCastService", "onStartCommand 异常 action=" + action, t);
             notifyError(t.getMessage() == null ? t.toString() : t.getMessage());
             stopSelf();
             return START_NOT_STICKY;
@@ -144,16 +161,30 @@ public class ScreenCastService extends Service {
         });
     }
 
-    private void stopProjection(boolean alreadyStoppedBySystem) {
+    private void stopProjection(String reason, boolean alreadyStoppedBySystem) {
+        AppLog.i("ScreenCastService", "stopProjection reason=" + reason
+                + " alreadyStopped=" + alreadyStoppedBySystem
+                + " hasProjection=" + (mediaProjection != null));
         MediaProjection projection = mediaProjection;
         mediaProjection = null;
         if (projection != null && !alreadyStoppedBySystem) {
+            if (activeCallback != null) {
+                try {
+                    projection.unregisterCallback(activeCallback);
+                    AppLog.i("ScreenCastService", "projection callback unregistered");
+                } catch (Throwable t) {
+                    AppLog.w("ScreenCastService", "unregister projection callback failed: " + t);
+                }
+            }
+            activeCallback = null;
             try {
                 projection.stop();
-            } catch (Throwable ignored) {
+                AppLog.i("ScreenCastService", "projection.stop() returned");
+            } catch (Throwable t) {
+                AppLog.w("ScreenCastService", "projection.stop() failed: " + t);
             }
         }
-        if (alreadyStoppedBySystem && listener != null) {
+        if (alreadyStoppedBySystem) {
             mainHandler.post(() -> {
                 if (listener != null) listener.onStopped();
             });
@@ -166,7 +197,8 @@ public class ScreenCastService extends Service {
     }
 
     @Override public void onDestroy() {
-        if (mediaProjection != null) stopProjection(false);
+        AppLog.i("ScreenCastService", "onDestroy");
+        if (mediaProjection != null) stopProjection("service onDestroy", false);
         super.onDestroy();
     }
 
@@ -177,10 +209,14 @@ public class ScreenCastService extends Service {
     private void createChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        if (nm == null) return;
+        if (nm == null) {
+            AppLog.w("ScreenCastService", "NotificationManager unavailable");
+            return;
+        }
         NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID, "Cluster Projection", NotificationManager.IMPORTANCE_LOW);
         nm.createNotificationChannel(channel);
+        AppLog.i("ScreenCastService", "notification channel ready");
     }
 
     private Notification buildNotification() {

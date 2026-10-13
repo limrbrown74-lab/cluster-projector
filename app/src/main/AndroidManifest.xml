@@ -41,6 +41,12 @@
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
+        <provider
+            android:name=".LogShareProvider"
+            android:authorities="${applicationId}.logprovider"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <activity
             android:name=".TestCastActivity"
             android:exported="false"

@@ -3,7 +3,6 @@ package org.clusterprojector.display;
 import android.content.Context;
 import android.hardware.display.DisplayManager;
 import android.util.DisplayMetrics;
-import android.util.Log;
 import android.view.Display;
 
 import java.util.ArrayList;
@@ -51,7 +50,11 @@ public final class DisplayEnumerator {
                     score,
                     reason);
             out.add(target);
-            Log.i(TAG, "display=" + target + " flags=0x" + Integer.toHexString(d.getFlags()));
+            ClusterLog.i(TAG, "display=" + target + " name=" + d.getName()
+                    + " state=" + d.getState() + " rotation=" + d.getRotation()
+                    + " flags=0x" + Integer.toHexString(d.getFlags())
+                    + " metrics=" + metrics.widthPixels + "x" + metrics.heightPixels
+                    + "@" + metrics.densityDpi);
         }
 
         Collections.sort(out, new Comparator<DisplayTarget>() {

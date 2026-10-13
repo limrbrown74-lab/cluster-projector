@@ -119,7 +119,8 @@ public class MainActivity extends Activity {
                 pendingPackage = entry.packageName;
                 startTestAfterProjection = false;
                 AppLog.i("MainActivity", "选择应用: " + entry.packageName
-                        + " system=" + entry.systemApp);
+                        + " label=" + entry.label + " system=" + entry.systemApp
+                        + " targetDisplay=" + targetDisplay + " projecting=" + projecting);
                 // 投屏会话已经存在时，即使正在切换/降级，也交给 CastController 排队，
                 // 不应该再次弹出 MediaProjection 授权框。
                 if (projecting && controller != null && controller.isRunning()) {
@@ -177,31 +178,114 @@ public class MainActivity extends Activity {
     private void showLogs() {
         try {
             java.io.File[] files = AppLog.listLogs();
-            StringBuilder sb = new StringBuilder("优先日志目录: /sdcard/Download/clusterprojector/\n"
-                    + "兜底日志目录: Android/data/" + getPackageName()
-                    + "/files/clusterprojector-logs/\n\n");
+            StringBuilder sb = new StringBuilder("日志会同时写入：\n")
+                    .append(AppLog.getLogDirectoryHint()).append("\n");
             if (files.length == 0) {
-                sb.append("暂无日志文件");
+                sb.append("\n暂无日志文件");
             } else {
+                sb.append("\n发现 ").append(files.length).append(" 个日志/崩溃文件：\n");
                 for (java.io.File f : files) {
-                    sb.append(f.getName()).append("  (").append(f.length() / 1024).append("KB)\n");
+                    sb.append("• ").append(f.getName())
+                            .append("  (").append(Math.max(1, f.length() / 1024)).append("KB)\n");
                 }
             }
-            sb.append("\n点击确定后关闭");
+            sb.append("\n请点击“分享完整日志”，选择微信/文件传输等方式导出；"
+                    + "导出的文件已包含当前设备、权限、Display、投屏链路和崩溃堆栈。");
             new android.app.AlertDialog.Builder(this)
-                    .setTitle("日志文件")
+                    .setTitle("诊断日志")
                     .setMessage(sb)
-                    .setPositiveButton("确定", null)
-                    .setNeutralButton("打开文件管理器", (d, w) -> {
-                        Intent i = new Intent(Intent.ACTION_VIEW);
-                        i.setData(Uri.parse(
-                                "content://com.android.externalstorage.documents/document/primary%3ADownload%2Fclusterprojector"));
-                        try { startActivity(i); } catch (Exception ignored) {}
-                    })
+                    .setPositiveButton("分享完整日志", (d, w) -> shareDiagnosticLog())
+                    .setNeutralButton("文件管理器", (d, w) -> openLogFileManager())
+                    .setNegativeButton("关闭", null)
                     .show();
         } catch (Throwable t) {
             AppLog.e("MainActivity", "showLogs 异常", t);
+            Toast.makeText(this, "打开日志失败: " + t.getMessage(), Toast.LENGTH_LONG).show();
         }
+    }
+
+    private void openLogFileManager() {
+        Intent i = new Intent(Intent.ACTION_VIEW);
+        i.setData(Uri.parse(
+                "content://com.android.externalstorage.documents/document/primary%3ADownload%2Fclusterprojector"));
+        try {
+            startActivity(i);
+            AppLog.i("MainActivity", "open log file manager requested");
+        } catch (Throwable t) {
+            AppLog.e("MainActivity", "打开文件管理器失败", t);
+            Toast.makeText(this, "当前系统没有可打开该目录的文件管理器", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void shareDiagnosticLog() {
+        Toast.makeText(this, "正在整理完整诊断日志...", Toast.LENGTH_SHORT).show();
+        AppLog.i("MainActivity", "export diagnostic bundle requested");
+        String runtimeInfo = buildDiagnosticInfo();
+        new Thread(() -> {
+            try {
+                java.io.File file = AppLog.exportDiagnosticBundle(this, runtimeInfo);
+                Uri uri = new Uri.Builder()
+                        .scheme("content")
+                        .authority(getPackageName() + ".logprovider")
+                        .appendPath("diagnostic")
+                        .appendPath(file.getName())
+                        .build();
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType("text/plain");
+                send.putExtra(Intent.EXTRA_STREAM, uri);
+                send.putExtra(Intent.EXTRA_SUBJECT, "ClusterProjector 诊断日志 " + file.getName());
+                send.putExtra(Intent.EXTRA_TEXT, "ClusterProjector FX11 诊断日志");
+                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                send.setClipData(android.content.ClipData.newUri(
+                        getContentResolver(), "diagnostic log", uri));
+                Intent chooser = Intent.createChooser(send, "分享完整诊断日志");
+                chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                AppLog.i("MainActivity", "diagnostic bundle exported: " + file.getAbsolutePath()
+                        + " size=" + file.length() + " uri=" + uri);
+                runOnUiThread(() -> {
+                    try {
+                        startActivity(chooser);
+                    } catch (Throwable t) {
+                        AppLog.e("MainActivity", "调起系统分享失败", t);
+                        Toast.makeText(this, "无法调起分享：" + t.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                });
+            } catch (Throwable t) {
+                AppLog.e("MainActivity", "导出诊断日志失败", t);
+                runOnUiThread(() -> Toast.makeText(this,
+                        "导出诊断日志失败: " + t.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        }, "diagnostic-export").start();
+    }
+
+    private String buildDiagnosticInfo() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("selectedDisplay=").append(targetDisplay).append('\n')
+                .append("resolvedDisplay=").append(targetDisplayObj == null
+                        ? "null" : targetDisplayObj.getDisplayId()).append('\n')
+                .append("projecting=").append(projecting).append('\n')
+                .append("controllerRunning=").append(controller != null && controller.isRunning()).append('\n')
+                .append("controllerState=").append(controller == null
+                        ? "null" : controller.getDiagnosticState()).append('\n')
+                .append("overlayGranted=").append(!(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                        || Settings.canDrawOverlays(this)).append('\n')
+                .append("projectionGrantedInUi=").append(mediaProjectionGranted).append('\n')
+                .append("projectionRejected=").append(mediaProjectionRejected).append('\n')
+                .append("serviceProjectionActive=").append(ScreenCastService.isRunning()).append('\n')
+                .append("pendingPackage=").append(pendingPackage).append('\n')
+                .append("pendingTest=").append(startTestAfterProjection).append('\n')
+                .append("launchableApps=").append(launchableAppCount)
+                .append(" system=").append(systemAppCount).append('\n')
+                .append("showSystemApps=").append(showSystemAppsCheck != null
+                        && showSystemAppsCheck.isChecked()).append('\n')
+                .append("missingOptionalPermissions=").append(collectOptionalRuntimePermissions()).append('\n');
+        if (displayEnumerator != null) {
+            sb.append("visibleDisplays:\n");
+            for (DisplayTarget d : displayEnumerator.listDisplays()) {
+                sb.append("  - ").append(d).append('\n');
+            }
+        }
+        return sb.toString();
     }
 
     private void loadAppList() {
@@ -578,6 +662,7 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "MediaProjection 服务不可用", Toast.LENGTH_LONG).show();
             return;
         }
+        AppLog.i("MainActivity", "launch system MediaProjection consent");
         startActivityForResult(projectionManager.createScreenCaptureIntent(), REQ_PROJECTION);
     }
 
@@ -602,6 +687,9 @@ public class MainActivity extends Activity {
             AppLog.e("MainActivity", "Display 不可见: " + targetDisplay);
             return;
         }
+        AppLog.i("MainActivity", "request projection: target=" + targetDisplay
+                + " resolved=" + (targetDisplayObj != null) + " pendingPkg=" + pendingPackage
+                + " pendingTest=" + startTestAfterProjection);
         if (!prepareProjectionPermissions()) return;
         launchProjectionIntent();
     }
@@ -624,6 +712,9 @@ public class MainActivity extends Activity {
             return;
         }
         if (requestCode == REQ_PROJECTION) {
+            AppLog.i("MainActivity", "MediaProjection onActivityResult: resultCode=" + resultCode
+                    + " ok=" + RESULT_OK + " data=" + (data != null)
+                    + " action=" + (data == null ? null : data.getAction()));
             if (resultCode != RESULT_OK || data == null) {
                 clearPendingProjectionAction();
                 mediaProjectionGranted = false;
@@ -642,6 +733,8 @@ public class MainActivity extends Activity {
     private void startProjectionService(int resultCode, Intent data) {
         try {
             setStatus("正在启动投屏服务...");
+            AppLog.i("MainActivity", "start projection service: resultCode=" + resultCode
+                    + " data=" + (data != null) + " target=" + targetDisplay);
             ScreenCastService.setProjectionListener(new ScreenCastService.ProjectionListener() {
                 @Override public void onReady(MediaProjection projection) {
                     runOnUiThread(() -> beginCasting(projection));
@@ -659,6 +752,7 @@ public class MainActivity extends Activity {
                 }
             });
 
+            AppLog.i("MainActivity", "dispatch ACTION_START to ScreenCastService");
             Intent service = new Intent(this, ScreenCastService.class);
             service.setAction(ScreenCastService.ACTION_START);
             service.putExtra(ScreenCastService.EXTRA_RESULT_CODE, resultCode);
@@ -676,6 +770,9 @@ public class MainActivity extends Activity {
 
     private void beginCasting(MediaProjection projection) {
         try {
+            AppLog.i("MainActivity", "beginCasting: projection=" + (projection != null)
+                    + " previousController=" + (controller != null)
+                    + " pendingPkg=" + pendingPackage + " pendingTest=" + startTestAfterProjection);
             if (targetDisplay == null) {
                 targetDisplay = displayEnumerator.findRecommendedDisplay();
             }
@@ -686,15 +783,21 @@ public class MainActivity extends Activity {
             }
 
             if (controller != null) controller.stop();
+            AppLog.i("MainActivity", "create CastController: target=" + targetDisplay
+                    + " display=" + targetDisplayObj.getDisplayId());
             controller = new CastController(this, targetDisplay, targetDisplayObj);
             controller.setListener(new CastController.Listener() {
                 @Override public void onVirtualDisplayReady(int mode, int virtualDisplayId) {
+                    AppLog.i("MainActivity", "controller ready: mode=" + mode + " vdId="
+                            + virtualDisplayId);
                     runOnUiThread(() -> setStatus(mode == CastController.MODE_MIRROR
-                            ? "兼容镜像已就绪：捕获中控 Display 0"
-                            : "直出虚拟屏已就绪: vd=" + virtualDisplayId));
+                            ? "兼容镜像捕获已启动，正在等待仪表第一帧…"
+                            : "直出虚拟屏已就绪: vd=" + virtualDisplayId + "（等待应用画面）"));
                 }
 
                 @Override public void onModeChanged(int mode, String reason) {
+                    AppLog.i("MainActivity", "controller mode changed: mode=" + mode
+                            + " reason=" + reason);
                     runOnUiThread(() -> {
                         applyDefaultSliderLayout(mode);
                         setStatus((mode == CastController.MODE_MIRROR ? "已切换兼容镜像模式：" : "直出模式：") + reason);
@@ -702,9 +805,24 @@ public class MainActivity extends Activity {
                 }
 
                 @Override public void onAppLaunched(String packageName, boolean success, String error) {
-                    runOnUiThread(() -> setStatus(success
-                            ? "已输出: " + packageName
-                            : "启动失败: " + packageName + " / " + error));
+                    AppLog.i("MainActivity", "app launch callback: pkg=" + packageName
+                            + " success=" + success + " error=" + error);
+                    runOnUiThread(() -> {
+                        if (!success) {
+                            setStatus("启动失败: " + packageName + " / " + error);
+                        } else if (controller != null
+                                && controller.getMode() == CastController.MODE_MIRROR) {
+                            setStatus("镜像模式已切到前台: " + packageName + "，等待第一帧…");
+                        } else {
+                            setStatus("直出启动请求已被系统接受: " + packageName
+                                    + "；若仪表仍无画面，请分享日志判断是否被重定向");
+                        }
+                    });
+                }
+
+                @Override public void onMirrorFirstFrame() {
+                    AppLog.i("MainActivity", "mirror first frame shown on dashboard");
+                    runOnUiThread(() -> setStatus("镜像第一帧已输出到仪表盘"));
                 }
 
                 @Override public void onError(String message, Throwable cause) {
@@ -718,14 +836,18 @@ public class MainActivity extends Activity {
 
             controller.start(projection);
             projecting = true;
+            AppLog.i("MainActivity", "controller.start returned, projecting=true state="
+                    + controller.getDiagnosticState());
             if (controlsContent != null) controlsContent.setVisibility(View.VISIBLE);
             displaySpinner.setEnabled(false);
             applyDefaultSliderLayout(CastController.MODE_DIRECT);
             if (pendingPackage != null) {
                 String pkg = pendingPackage;
                 pendingPackage = null;
+                AppLog.i("MainActivity", "flush pending app after controller start: " + pkg);
                 controller.launchApp(pkg);
             } else if (startTestAfterProjection) {
+                AppLog.i("MainActivity", "flush pending test screen after controller start");
                 controller.launchTestScreen(TestCastActivity.class);
             }
             startTestAfterProjection = false;

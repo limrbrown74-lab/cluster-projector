@@ -7,5 +7,6 @@ public class ClusterApp extends Application {
     @Override public void onCreate() {
         super.onCreate();
         AppLog.init(this);
+        org.clusterprojector.display.ClusterLog.init(this);
     }
 }
