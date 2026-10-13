@@ -10,8 +10,8 @@ android {
         // FX11 为 Android 11 / ecarx 定制系统，云盘等车机预装应用也停留在 targetSdk 28。
         // 使用 28 可避免新版本兼容策略影响后台启动、外部存储日志和车机多 Display 行为。
         targetSdk 28
-        versionCode 6
-        versionName "1.2.3-fx11"
+        versionCode 7
+        versionName "1.2.4-fx11"
     }
 
     compileOptions {

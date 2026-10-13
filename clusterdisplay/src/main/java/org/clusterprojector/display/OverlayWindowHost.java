@@ -244,11 +244,21 @@ public final class OverlayWindowHost {
 
     private void buildWindowContextAndManager() {
         int type = overlayType();
-        // Android 11 / API 30 公开 API。窗口类型必须与 addView 的 LayoutParams.type 一致。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            windowContext = appContext.createWindowContext(display, type, null);
+            try {
+                // 标准 Android 11 公开 API。窗口类型必须与 addView 的 LayoutParams.type 一致。
+                windowContext = appContext.createWindowContext(display, type, null);
+                Log.i(TAG, "using WindowContext for display=" + display.getDisplayId());
+            } catch (LinkageError | RuntimeException e) {
+                // 部分车机虽然声明 sdk=30，但厂商裁剪/改造 framework.jar 后会缺失该方法，
+                // 实车日志表现为 NoSuchMethodError。此时回退到 DisplayContext。
+                Log.w(TAG, "createWindowContext unavailable, fallback to DisplayContext"
+                        + " display=" + display.getDisplayId(), e);
+                windowContext = appContext.createDisplayContext(display);
+            }
         } else {
             windowContext = appContext.createDisplayContext(display);
+            Log.i(TAG, "using DisplayContext for display=" + display.getDisplayId());
         }
         windowMgr = (WindowManager) windowContext.getSystemService(Context.WINDOW_SERVICE);
         if (windowMgr == null) {

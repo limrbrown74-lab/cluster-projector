@@ -17,8 +17,8 @@
 
 ```text
 applicationId = org.clusterprojector.app
-versionCode   = 6
-versionName   = 1.2.3-fx11
+versionCode   = 7
+versionName   = 1.2.4-fx11
 minSdk        = 23
 targetSdk     = 28
 ```
