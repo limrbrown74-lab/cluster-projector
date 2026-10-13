@@ -5,16 +5,18 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <!-- Android 10+ 从后台启动 Activity 到虚拟屏 -->
-    <uses-permission android:name="android.permission.START_ACTIVITIES_FROM_BACKGROUND" />
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
 
-    <!-- 后台保活 -->
+    <!-- 后台与开机入口 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <!-- 查看全部已安装应用 -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <!-- 日志写入 Download 目录 -->
+
+    <!-- targetSdk 28 下保留旧版外部存储日志能力 -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
@@ -22,11 +24,13 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="仪表投屏"
+        android:requestLegacyExternalStorage="true"
         android:theme="@style/AppTheme">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:resizeableActivity="true"
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -43,6 +47,8 @@
             android:name=".TestCastActivity"
             android:exported="false"
             android:excludeFromRecents="true"
+            android:resizeableActivity="true"
+            android:screenOrientation="landscape"
             android:theme="@style/AppTheme" />
 
         <service

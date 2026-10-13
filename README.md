@@ -185,3 +185,44 @@ ctrl.setAlpha(0.85f);
 
 - Android Open Source Project
 - 所有为本项目提供思路与反馈的开发者
+
+---
+
+## FX11 / 吉利博越 L 适配说明（2026-10-13）
+
+本分支已按以下实车参数调整：
+
+| 项目 | 参数 |
+|---|---|
+| 车型 | 吉利博越 L 2022 款 |
+| 系统 | 银河 NOS 2.3 / Android 11 `RQ3A.211001.001` |
+| 平台 | 亿咖通 ecarx 定制 |
+| SELinux | permissive |
+| 中控 Display | Display 0，1440×1920@160dpi |
+| 仪表 Display | 优先 Display 3，备选 Display 4，1920×532@320dpi |
+| 排除屏幕 | Display 1：800×480；Display 2：2880×1080 |
+
+关键适配：
+
+1. Demo App 的 `targetSdkVersion` 调整为 28，与车机预装多屏应用的兼容级别保持一致。
+2. 新增 `Fx11DisplayProfile`，自动优先识别 1920×532@320dpi 的仪表长条屏，不再简单选择“第一个非默认屏”。
+3. Android 11 上使用公开的 `Context.createWindowContext(Display, type, options)` 创建仪表窗口，不再反射隐藏的 `LayoutParams#setDisplayId()`。
+4. 默认投屏窗口为 960×266，居中于 1920×532 仪表屏，与实车日志中的 Display/QNX 区域对齐。
+5. 虚拟屏命名为 `SecondaryScreenMirror`，密度固定使用仪表屏 320dpi。
+6. Service 先进入前台，再获取 `MediaProjection`，并注册 `MediaProjection.Callback` 处理系统回收。
+7. 增加虚拟屏和 Overlay 的错误日志，关键 Logcat tag：
+   - `ClusterDisplay`
+   - `ClusterOverlay`
+   - `ClusterVirtual`
+   - `ClusterCast`
+   - `ScreenCastService`
+
+调试构建产物：
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+cluster-projector-fx11-debug.apk
+clusterdisplay/build/outputs/aar/clusterdisplay-debug.aar
+```
+
+> 注意：SELinux permissive 只代表 SELinux 不拦截，并不绕过 Android 的 Display 可见性、AppOps、前台服务和多 Display 启动策略。若日志提示无法在 Display 3/4 添加窗口，说明还需要车机系统侧白名单或厂商多屏授权；本工程不包含 root、签名伪装或权限绕过实现。

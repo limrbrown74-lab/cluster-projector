@@ -2,108 +2,168 @@ package org.clusterprojector.display;
 
 import android.content.Context;
 import android.media.projection.MediaProjection;
-import android.util.DisplayMetrics;
+import android.util.Log;
 import android.view.Display;
 
-/**
- * 仪表盘投屏统一控制器。
- * 创建仪表盘悬浮窗与虚拟屏，把已启动应用的画面路由到悬浮窗 Surface。
- *
- * <p>所有窗口几何参数（位置 / 尺寸 / 透明度）均由中控屏控制面板驱动，
- * 因为仪表盘本身无触控能力。
- *
- * <p>本模块由 AI 辅助原创开发。
- */
+/** FX11 仪表投屏控制器。 */
 public final class CastController {
+
+    private static final String TAG = "ClusterCast";
 
     private final Context context;
     private final DisplayTarget clusterInfo;
     private final Display clusterDisplay;
 
     private MediaProjection mediaProjection;
-    private OverlayWindowHost overlayCtrl;
-    private VirtualScreenHost virtualDisplay;
-    private WindowGeometry windowBounds;
+    private OverlayWindowHost overlay;
+    private VirtualScreenHost virtualScreen;
+    private WindowGeometry bounds;
     private float opacity = 1f;
     private boolean active;
+    private boolean virtualReady;
+    private String pendingPackage;
+    private Class<?> pendingTestActivity;
+    private Listener listener;
 
-    /** 投屏事件回调。 */
     public interface Listener {
-        /** 应用启动结果回调。 */
-        void onAppLaunched(String packageName, boolean success);
-        /** 窗口几何参数变化回调。 */
-        void onBoundsChanged(WindowGeometry bounds);
+        void onVirtualDisplayReady(int virtualDisplayId);
+        void onAppLaunched(String packageName, boolean success, String error);
+        void onError(String message, Throwable cause);
     }
 
-    private Listener eventListener;
-
-    public CastController(Context context, DisplayTarget clusterInfo,
-                                       Display clusterDisplay) {
+    public CastController(Context context, DisplayTarget clusterInfo, Display clusterDisplay) {
         this.context = context.getApplicationContext();
         this.clusterInfo = clusterInfo;
         this.clusterDisplay = clusterDisplay;
     }
 
-    public void setListener(Listener listener) { this.eventListener = listener; }
-    public boolean isRunning() { return active; }
-    public WindowGeometry getBounds() { return windowBounds; }
-    public float getAlpha() { return opacity; }
-
-    /**
-     * 在仪表盘上创建悬浮窗。虚拟屏在悬浮窗 Surface 就绪后懒加载创建。
-     */
-    public void start(MediaProjection projection, DisplayMetrics metrics) {
-        if (active) return;
-        active = true;
-        this.mediaProjection = projection;
-
-        windowBounds = WindowGeometry.centered(
-                clusterInfo.getWidth(), clusterInfo.getHeight());
-
-        overlayCtrl = new OverlayWindowHost(context, clusterInfo.getDisplayId(), windowBounds);
-        overlayCtrl.setSurfaceCallback(surface -> {
-            virtualDisplay = new VirtualScreenHost(context, mediaProjection);
-            virtualDisplay.create(
-                    clusterInfo.getWidth(),
-                    clusterInfo.getHeight(),
-                    metrics.densityDpi,
-                    surface);
-        });
-        overlayCtrl.start();
+    public void setListener(Listener listener) {
+        this.listener = listener;
     }
 
-    /** 在仪表盘悬浮窗上启动指定应用。 */
+    public boolean isRunning() { return active; }
+    public boolean isVirtualReady() { return virtualReady; }
+    public WindowGeometry getBounds() { return bounds; }
+    public float getAlpha() { return opacity; }
+    public int getVirtualDisplayId() { return virtualScreen == null ? -1 : virtualScreen.getDisplayId(); }
+
+    public void start(MediaProjection projection) {
+        if (active) return;
+        active = true;
+        virtualReady = false;
+        mediaProjection = projection;
+
+        // FX11 实测云盘链路的窗口为 960x266，位于 1920x532 屏幕中央。
+        bounds = WindowGeometry.centered(clusterInfo.getWidth(), clusterInfo.getHeight());
+        overlay = new OverlayWindowHost(
+                context,
+                clusterDisplay,
+                clusterInfo.getWidth(),
+                clusterInfo.getHeight(),
+                bounds);
+        overlay.setSurfaceCallback(new OverlayWindowHost.SurfaceCallback() {
+            @Override public void onSurfaceAvailable(android.view.Surface surface) {
+                Log.i(TAG, "surface available");
+            }
+
+            @Override public void onSurfaceChanged(android.view.Surface surface, int width, int height) {
+                attachOrUpdateVirtualDisplay(surface);
+            }
+
+            @Override public void onSurfaceDestroyed() {
+                Log.i(TAG, "surface destroyed");
+            }
+        });
+        overlay.start();
+    }
+
+    private void attachOrUpdateVirtualDisplay(android.view.Surface surface) {
+        try {
+            if (virtualScreen == null) {
+                virtualScreen = new VirtualScreenHost(context, mediaProjection);
+                virtualScreen.create(
+                        clusterInfo.getWidth(),
+                        clusterInfo.getHeight(),
+                        clusterInfo.getDensityDpi(),
+                        surface);
+                virtualReady = true;
+                if (listener != null) listener.onVirtualDisplayReady(virtualScreen.getDisplayId());
+                flushPendingLaunch();
+            } else {
+                virtualScreen.setSurface(surface);
+            }
+        } catch (Throwable t) {
+            active = false;
+            if (listener != null) listener.onError(t.getMessage(), t);
+        }
+    }
+
+    private void flushPendingLaunch() {
+        Class<?> test = pendingTestActivity;
+        String pkg = pendingPackage;
+        pendingTestActivity = null;
+        pendingPackage = null;
+
+        if (test != null) {
+            launchTestScreen(test);
+        } else if (pkg != null) {
+            launchApp(pkg);
+        }
+    }
+
     public boolean launchApp(String packageName) {
-        if (virtualDisplay == null) return false;
-        boolean ok = virtualDisplay.launchApp(packageName);
-        if (eventListener != null) eventListener.onAppLaunched(packageName, ok);
+        if (!active) return false;
+        if (!virtualReady || virtualScreen == null) {
+            pendingPackage = packageName;
+            Log.i(TAG, "virtual display not ready, pending " + packageName);
+            return true;
+        }
+        boolean ok = virtualScreen.launchApp(packageName);
+        String error = ok ? null : virtualScreen.getLastError();
+        if (listener != null) listener.onAppLaunched(packageName, ok, error);
         return ok;
     }
 
-    /** 启动内置测试画面，验证投屏链路。 */
     public boolean launchTestScreen(Class<?> testActivityClass) {
-        if (virtualDisplay == null) return false;
-        return virtualDisplay.launchTestScreen(testActivityClass);
+        if (!active) return false;
+        if (!virtualReady || virtualScreen == null) {
+            pendingTestActivity = testActivityClass;
+            return true;
+        }
+        boolean ok = virtualScreen.launchActivity(testActivityClass);
+        String label = testActivityClass.getName();
+        if (listener != null) listener.onAppLaunched(label, ok, ok ? null : virtualScreen.getLastError());
+        return ok;
     }
 
-    /** 从中控屏控制面板更新悬浮窗位置/尺寸。 */
     public void setBounds(WindowGeometry newBounds) {
-        this.windowBounds = newBounds;
-        if (overlayCtrl != null) overlayCtrl.setBounds(newBounds);
-        if (eventListener != null) eventListener.onBoundsChanged(newBounds);
+        int width = Math.max(1, Math.min(newBounds.width, clusterInfo.getWidth()));
+        int height = Math.max(1, Math.min(newBounds.height, clusterInfo.getHeight()));
+        int x = Math.max(0, Math.min(newBounds.x, clusterInfo.getWidth() - width));
+        int y = Math.max(0, Math.min(newBounds.y, clusterInfo.getHeight() - height));
+        bounds = new WindowGeometry(x, y, width, height);
+        if (overlay != null) overlay.setBounds(bounds);
     }
 
-    /** 更新悬浮窗不透明度（0..1）。 */
     public void setAlpha(float alpha) {
-        this.opacity = alpha;
-        if (overlayCtrl != null) overlayCtrl.setAlpha(alpha);
+        opacity = Math.max(0f, Math.min(1f, alpha));
+        if (overlay != null) overlay.setAlpha(opacity);
     }
 
     public void stop() {
-        if (!active) return;
+        if (!active && overlay == null && virtualScreen == null) return;
         active = false;
-        if (virtualDisplay != null) { virtualDisplay.release(); virtualDisplay = null; }
-        if (overlayCtrl != null) { overlayCtrl.stop(); overlayCtrl = null; }
+        virtualReady = false;
+        pendingPackage = null;
+        pendingTestActivity = null;
+        if (virtualScreen != null) {
+            virtualScreen.release();
+            virtualScreen = null;
+        }
+        if (overlay != null) {
+            overlay.stop();
+            overlay = null;
+        }
         mediaProjection = null;
     }
 }

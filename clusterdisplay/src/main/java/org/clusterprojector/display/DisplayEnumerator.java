@@ -2,25 +2,19 @@ package org.clusterprojector.display;
 
 import android.content.Context;
 import android.hardware.display.DisplayManager;
+import android.util.DisplayMetrics;
+import android.util.Log;
 import android.view.Display;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
-/**
- * Enumerates the {@link Display}s available on the device so the caller can pick
- * which one is the instrument cluster / secondary screen.
- *
- * <p>On a normal phone only the default display is visible; on an AAOS head unit
- * the cluster usually shows up as a secondary display under the
- * {@link DisplayManager#DISPLAY_CATEGORY_PRESENTATION} category.
- *
- * <p>All methods are reflection-free and use only the public Android framework, so
- * the library compiles and runs on a stock phone.
- *
- * <p>本模块由 AI 辅助原创开发。
- */
+/** 枚举当前进程可见的 Display，并按 FX11 仪表特征排序。 */
 public final class DisplayEnumerator {
+
+    private static final String TAG = "ClusterDisplay";
 
     private final Context app;
 
@@ -28,48 +22,55 @@ public final class DisplayEnumerator {
         this.app = context.getApplicationContext();
     }
 
-    /**
-     * @return all displays this process is allowed to see, including the default one.
-     */
     public List<DisplayTarget> listDisplays() {
         DisplayManager dm = (DisplayManager) app.getSystemService(Context.DISPLAY_SERVICE);
         List<DisplayTarget> out = new ArrayList<>();
         if (dm == null) return out;
 
-        Display[] displays = dm.getDisplays();
-        for (Display d : displays) {
+        // 同时枚举普通 Display 与 Presentation 类别，部分车机只在后者暴露仪表屏。
+        java.util.LinkedHashMap<Integer, Display> unique = new java.util.LinkedHashMap<>();
+        addDisplays(unique, dm.getDisplays());
+        addDisplays(unique, dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION));
+        for (Display d : unique.values()) {
+            DisplayMetrics metrics = new DisplayMetrics();
+            d.getRealMetrics(metrics);
             int id = d.getDisplayId();
-            android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
-            d.getMetrics(metrics);
-            out.add(new DisplayTarget(
+            int score = Fx11DisplayProfile.scoreDisplay(
+                    id, metrics.widthPixels, metrics.heightPixels,
+                    metrics.densityDpi, d.getFlags());
+            String reason = Fx11DisplayProfile.describe(
+                    id, metrics.widthPixels, metrics.heightPixels, metrics.densityDpi);
+            DisplayTarget target = new DisplayTarget(
                     id,
-                    buildName(d),
+                    d.getName(),
                     metrics.widthPixels,
                     metrics.heightPixels,
                     metrics.densityDpi,
-                    id == Display.DEFAULT_DISPLAY));
+                    d.getFlags(),
+                    id == Display.DEFAULT_DISPLAY,
+                    score,
+                    reason);
+            out.add(target);
+            Log.i(TAG, "display=" + target + " flags=0x" + Integer.toHexString(d.getFlags()));
         }
+
+        Collections.sort(out, new Comparator<DisplayTarget>() {
+            @Override public int compare(DisplayTarget a, DisplayTarget b) {
+                if (a.getScore() != b.getScore()) return b.getScore() - a.getScore();
+                return a.getDisplayId() - b.getDisplayId();
+            }
+        });
         return out;
     }
 
-    /**
-     * @return displays that are suitable for projecting onto (secondary displays),
-     *         excluding the default main screen. Empty on a phone without a cluster.
-     */
-    public List<DisplayTarget> listProjectableDisplays() {
-        List<DisplayTarget> all = listDisplays();
-        List<DisplayTarget> out = new ArrayList<>();
-        for (DisplayTarget info : all) {
-            if (!info.isDefault()) out.add(info);
+    /** @return FX11 首选仪表屏；如果系统暂未向本进程开放，则返回 null。 */
+    public DisplayTarget findRecommendedDisplay() {
+        for (DisplayTarget info : listDisplays()) {
+            if (!info.isDefault() && info.getScore() >= 80) return info;
         }
-        return out;
+        return null;
     }
 
-    /**
-     * Find a display by id.
-     *
-     * @return the display info, or {@code null} if it is not visible to this process.
-     */
     public DisplayTarget findById(int displayId) {
         for (DisplayTarget info : listDisplays()) {
             if (info.getDisplayId() == displayId) return info;
@@ -77,13 +78,23 @@ public final class DisplayEnumerator {
         return null;
     }
 
-    private static String buildName(Display d) {
-        // Display.getName() is API 17+ but hidden on some OEM builds; guard via reflection.
-        try {
-            Object name = Display.class.getMethod("getName").invoke(d);
-            if (name != null) return name.toString();
-        } catch (Throwable ignored) {
+    public Display resolveDisplay(DisplayTarget target) {
+        if (target == null) return null;
+        DisplayManager dm = (DisplayManager) app.getSystemService(Context.DISPLAY_SERVICE);
+        if (dm == null) return null;
+        Display direct = dm.getDisplay(target.getDisplayId());
+        if (direct != null) return direct;
+
+        java.util.LinkedHashMap<Integer, Display> unique = new java.util.LinkedHashMap<>();
+        addDisplays(unique, dm.getDisplays());
+        addDisplays(unique, dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION));
+        return unique.get(target.getDisplayId());
+    }
+
+    private static void addDisplays(java.util.Map<Integer, Display> out, Display[] displays) {
+        if (displays == null) return;
+        for (Display display : displays) {
+            if (display != null) out.put(display.getDisplayId(), display);
         }
-        return "Display " + d.getDisplayId();
     }
 }

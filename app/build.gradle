@@ -7,14 +7,21 @@ android {
     defaultConfig {
         applicationId "org.clusterprojector.app"
         minSdk 23
-        targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        // FX11 为 Android 11 / ecarx 定制系统，云盘等车机预装应用也停留在 targetSdk 28。
+        // 使用 28 可避免新版本兼容策略影响后台启动、外部存储日志和车机多 Display 行为。
+        targetSdk 28
+        versionCode 2
+        versionName "1.1-fx11"
     }
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        // 这是面向 FX11 Android 11 车机的侧载工程，不通过 Google Play 分发。
+        disable 'ExpiredTargetSdkVersion'
     }
 }
 
