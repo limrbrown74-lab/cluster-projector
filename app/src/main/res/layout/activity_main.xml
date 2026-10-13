@@ -227,14 +227,32 @@
         android:background="@drawable/btn_secondary"
         android:layout_marginBottom="8dp" />
 
-    <!-- App List header label -->
-    <TextView
-        android:layout_width="wrap_content"
+    <!-- App List header -->
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="已安装应用（点击投屏）"
-        android:textColor="#B8BDD2"
-        android:textSize="12sp"
-        android:layout_marginBottom="4dp" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="4dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="已安装应用（点击投屏）"
+            android:textColor="#B8BDD2"
+            android:textSize="12sp" />
+
+        <CheckBox
+            android:id="@+id/showSystemAppsCheck"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:checked="true"
+            android:buttonTint="#00D4FF"
+            android:text="系统应用"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp" />
+    </LinearLayout>
 
     <!-- App List: takes remaining space, scrolls independently -->
     <ListView

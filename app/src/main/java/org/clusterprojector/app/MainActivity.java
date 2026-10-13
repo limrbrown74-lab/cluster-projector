@@ -4,8 +4,9 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.ResolveInfo;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.graphics.drawable.Drawable;
 import android.hardware.display.DisplayManager;
 import android.media.projection.MediaProjection;
@@ -22,6 +23,7 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.BaseAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.SeekBar;
@@ -52,6 +54,7 @@ public class MainActivity extends Activity {
     private TextView permissionStatusText;
     private TextView permissionSummaryText;
     private ListView appList;
+    private CheckBox showSystemAppsCheck;
     private Spinner displaySpinner;
     private View controlsContent;
     private SeekBar seekX, seekY, seekW, seekH, seekAlpha;
@@ -71,6 +74,8 @@ public class MainActivity extends Activity {
     private boolean projectionAfterOverlay;
     private boolean displayListInitialized;
     private int launchableAppCount = -1;
+    private int systemAppCount;
+    private final List<AppEntry> allLaunchableApps = new ArrayList<>();
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -107,6 +112,22 @@ public class MainActivity extends Activity {
             permissionButton = findViewById(R.id.permissionButton);
             appList = findViewById(R.id.appList);
             appList.setEmptyView(findViewById(R.id.emptyAppList));
+            showSystemAppsCheck = findViewById(R.id.showSystemAppsCheck);
+            showSystemAppsCheck.setOnCheckedChangeListener((button, checked) -> applyAppListFilter());
+            appList.setOnItemClickListener((parent, view, pos, id) -> {
+                AppEntry entry = (AppEntry) parent.getItemAtPosition(pos);
+                pendingPackage = entry.packageName;
+                startTestAfterProjection = false;
+                AppLog.i("MainActivity", "选择应用: " + entry.packageName
+                        + " system=" + entry.systemApp);
+                // 投屏会话已经存在时，即使正在切换/降级，也交给 CastController 排队，
+                // 不应该再次弹出 MediaProjection 授权框。
+                if (projecting && controller != null && controller.isRunning()) {
+                    controller.launchApp(entry.packageName);
+                } else {
+                    requestProjection();
+                }
+            });
             displaySpinner = findViewById(R.id.displaySpinner);
             controlsContent = findViewById(R.id.controlsContent);
             findViewById(R.id.controlCard).setOnClickListener(v -> toggleControls());
@@ -186,57 +207,95 @@ public class MainActivity extends Activity {
     private void loadAppList() {
         try {
             PackageManager pm = getPackageManager();
+            java.util.LinkedHashMap<String, AppEntry> appsByPackage = new java.util.LinkedHashMap<>();
+
+            // targetSdk 28 + QUERY_ALL_PACKAGES 下优先枚举所有已安装/预装应用。
+            // 只保留存在 Launch Intent 的包，避免列出 Settings Provider、SystemUI 无界面组件等。
+            List<ApplicationInfo> installedApplications = pm.getInstalledApplications(0);
+            for (ApplicationInfo appInfo : installedApplications) {
+                addLaunchableApp(pm, appsByPackage, appInfo);
+            }
+
+            // 再用 Launcher Intent 兜底，合并部分 ROM 对 getInstalledApplications 的隐私裁剪。
             Intent launcherIntent = new Intent(Intent.ACTION_MAIN)
                     .addCategory(Intent.CATEGORY_LAUNCHER);
-            List<ResolveInfo> launchableApps = pm.queryIntentActivities(launcherIntent, 0);
-            List<AppEntry> entries = new ArrayList<>();
-            java.util.HashSet<String> seenPackages = new java.util.HashSet<>();
-            for (ResolveInfo info : launchableApps) {
-                String packageName = info.activityInfo != null && info.activityInfo.applicationInfo != null
-                        ? info.activityInfo.applicationInfo.packageName : null;
-                if (packageName == null || packageName.equals(getPackageName())
-                        || !seenPackages.add(packageName)) {
-                    continue;
-                }
-                if (pm.getLaunchIntentForPackage(packageName) == null) continue;
-                entries.add(new AppEntry(
-                        packageName,
-                        info.loadLabel(pm).toString(),
-                        info.loadIcon(pm)));
+            List<ResolveInfo> launcherActivities = pm.queryIntentActivities(launcherIntent, 0);
+            for (ResolveInfo info : launcherActivities) {
+                ApplicationInfo appInfo = info.activityInfo != null
+                        ? info.activityInfo.applicationInfo : null;
+                if (appInfo != null) addLaunchableApp(pm, appsByPackage, appInfo);
             }
-            java.util.Collections.sort(entries, (a, b) -> a.label.compareToIgnoreCase(b.label));
-            appList.setAdapter(new AppListAdapter(entries));
-            launchableAppCount = entries.size();
-            AppLog.i("MainActivity", "已加载应用列表: " + entries.size());
-            refreshPermissionStatus();
-            appList.setOnItemClickListener((parent, view, pos, id) -> {
-                AppEntry entry = (AppEntry) parent.getItemAtPosition(pos);
-                pendingPackage = entry.packageName;
-                startTestAfterProjection = false;
-                AppLog.i("MainActivity", "选择应用: " + entry.packageName);
-                // 投屏会话已经存在时，即使正在切换/降级，也交给 CastController 排队，
-                // 不应该再次弹出 MediaProjection 授权框。
-                if (projecting && controller != null && controller.isRunning()) {
-                    controller.launchApp(entry.packageName);
-                } else {
-                    requestProjection();
-                }
+
+            List<AppEntry> entries = new ArrayList<>(appsByPackage.values());
+            java.util.Collections.sort(entries, (a, b) -> {
+                if (a.systemApp != b.systemApp) return a.systemApp ? -1 : 1;
+                return a.label.compareToIgnoreCase(b.label);
             });
+
+            allLaunchableApps.clear();
+            allLaunchableApps.addAll(entries);
+            systemAppCount = 0;
+            for (AppEntry entry : allLaunchableApps) {
+                if (entry.systemApp) systemAppCount++;
+            }
+            applyAppListFilter();
+            AppLog.i("MainActivity", "可启动应用: total=" + allLaunchableApps.size()
+                    + " system=" + systemAppCount
+                    + " thirdParty=" + (allLaunchableApps.size() - systemAppCount));
         } catch (Throwable t) {
+            allLaunchableApps.clear();
+            systemAppCount = 0;
             launchableAppCount = 0;
+            appList.setAdapter(new AppListAdapter(new ArrayList<>()));
             refreshPermissionStatus();
             AppLog.e("MainActivity", "loadAppList 异常", t);
         }
+    }
+
+    private void addLaunchableApp(PackageManager pm,
+            java.util.Map<String, AppEntry> appsByPackage, ApplicationInfo appInfo) {
+        if (appInfo == null) return;
+        String packageName = appInfo.packageName;
+        if (packageName == null || packageName.equals(getPackageName())
+                || appsByPackage.containsKey(packageName)) {
+            return;
+        }
+        // 只列出能够作为前台 Activity 启动的应用；系统私有无界面包不会进入列表。
+        if (pm.getLaunchIntentForPackage(packageName) == null) return;
+
+        boolean systemApp = (appInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0
+                || (appInfo.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0;
+        CharSequence label = appInfo.loadLabel(pm);
+        Drawable icon = appInfo.loadIcon(pm);
+        appsByPackage.put(packageName, new AppEntry(
+                packageName,
+                label != null && label.length() > 0 ? label.toString() : packageName,
+                icon,
+                systemApp));
+    }
+
+    private void applyAppListFilter() {
+        if (appList == null) return;
+        boolean showSystemApps = showSystemAppsCheck == null || showSystemAppsCheck.isChecked();
+        List<AppEntry> visibleApps = new ArrayList<>();
+        for (AppEntry entry : allLaunchableApps) {
+            if (showSystemApps || !entry.systemApp) visibleApps.add(entry);
+        }
+        appList.setAdapter(new AppListAdapter(visibleApps));
+        launchableAppCount = allLaunchableApps.size();
+        refreshPermissionStatus();
     }
 
     private static class AppEntry {
         final String packageName;
         final String label;
         final Drawable icon;
-        AppEntry(String packageName, String label, Drawable icon) {
+        final boolean systemApp;
+        AppEntry(String packageName, String label, Drawable icon, boolean systemApp) {
             this.packageName = packageName;
             this.label = label;
             this.icon = icon;
+            this.systemApp = systemApp;
         }
     }
 
@@ -255,7 +314,8 @@ public class MainActivity extends Activity {
             AppEntry entry = items.get(position);
             ((ImageView) convertView.findViewById(R.id.appIcon)).setImageDrawable(entry.icon);
             ((TextView) convertView.findViewById(R.id.appName)).setText(entry.label);
-            ((TextView) convertView.findViewById(R.id.appPkg)).setText(entry.packageName);
+            ((TextView) convertView.findViewById(R.id.appPkg))
+                    .setText((entry.systemApp ? "系统 · " : "三方 · ") + entry.packageName);
             return convertView;
         }
     }
@@ -338,7 +398,8 @@ public class MainActivity extends Activity {
         } else if (appListMissing) {
             sb.append("❌ 应用列表：未获取到可启动应用，请到应用详情允许“获取应用列表”\n");
         } else {
-            sb.append("✅ 应用列表：已发现 ").append(launchableAppCount).append(" 个可启动应用\n");
+            sb.append("✅ 应用列表：已发现 ").append(launchableAppCount)
+                    .append(" 个可启动应用（含 ").append(systemAppCount).append(" 个系统/预装）\n");
         }
         if (isMiuiLikeRom()) {
             sb.append("ℹ️ MIUI/HyperOS：如列表不全，请到应用详情检查“获取应用列表”\n");

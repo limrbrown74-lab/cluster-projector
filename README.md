@@ -17,8 +17,8 @@
 
 ```text
 applicationId = org.clusterprojector.app
-versionCode   = 5
-versionName   = 1.2.2-fx11
+versionCode   = 6
+versionName   = 1.2.3-fx11
 minSdk        = 23
 targetSdk     = 28
 ```
@@ -89,7 +89,10 @@ targetSdk     = 28
 
 ### 5. 应用选择与测试画面
 
-- 使用 Launcher Intent 枚举可启动 App；
+- 同时枚举第三方应用、系统应用和厂商预装应用；
+- 优先扫描所有已安装包，再用 Launcher Intent 兜底，只展示存在前台启动入口的应用；
+- “系统应用”开关默认开启，关闭后仅显示第三方应用；
+- 列表中以“系统 · 包名”和“三方 · 包名”区分来源；
 - 可点击任意可启动 App 尝试投屏；
 - “测试投屏”会发送内置测试画面，用于先验证 Display、Surface 和 VirtualDisplay 链路；
 - 已建立投屏会话后切换 App 时不会重复弹出 MediaProjection 授权框。
@@ -362,7 +365,7 @@ MIUI/HyperOS
 - 实车仪表置顶效果；
 - 直出与镜像的真实性能。
 
-MIUI/HyperOS 可能有独立的“获取应用列表”隐私开关。当前版本通过 Launcher Intent 查询可启动应用，在测试手机上即使没有手动授予完整应用列表权限，也能列出约 97 个可启动应用；如果列表数量异常或为 0，仍需到应用详情中检查该开关。
+MIUI/HyperOS 可能有独立的“获取应用列表”隐私开关。当前版本会优先通过 `getInstalledApplications()` 合并 Launcher Intent 查询，在测试手机上即使没有手动授予完整应用列表权限，也能列出 97 个可启动应用，其中包含系统/预装应用；如果列表数量异常或为 0，仍需到应用详情中检查该开关。
 
 ---
 
@@ -473,6 +476,14 @@ controller.setAlpha(1.0f);
 ---
 
 ## 版本记录
+
+
+### 1.2.3-fx11 / versionCode 6
+
+- 应用列表同时包含第三方应用、系统应用和厂商预装应用；
+- 新增“系统应用”显示开关，默认开启；
+- 列表项增加“系统 / 三方”来源标识；
+- 枚举方式改为已安装应用扫描 + Launcher Intent 兜底，仅展示具有前台启动入口的包。
 
 ### 1.2.2-fx11 / versionCode 5
 

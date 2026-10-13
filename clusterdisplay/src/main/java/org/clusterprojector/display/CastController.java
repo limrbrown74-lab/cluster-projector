@@ -184,7 +184,7 @@ public final class CastController {
                 if (listener != null) listener.onAppLaunched(packageName, true, null);
                 return true;
             }
-            fallbackToMirror(packageName, "直出启动第三方 App 失败：" + directDisplay.getLastError());
+            fallbackToMirror(packageName, "直出启动目标 App 失败（可能是系统/预装应用多屏策略限制）：" + directDisplay.getLastError());
             return true;
         }
 
