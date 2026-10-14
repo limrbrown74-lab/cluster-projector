@@ -17,8 +17,8 @@
 
 ```text
 applicationId = org.clusterprojector.app
-versionCode   = 8
-versionName   = 1.2.5-fx11
+versionCode   = 11
+versionName   = 1.2.8-fx11-log-tools
 minSdk        = 23
 targetSdk     = 28
 ```
@@ -36,10 +36,11 @@ targetSdk     = 28
 7. [安装和操作流程](#安装和操作流程)
 8. [权限卡片说明](#权限卡片说明)
 9. [手机与车机环境差异](#手机与车机环境差异)
-10. [日志与实车判断](#日志与实车判断)
-11. [核心库调用](#核心库调用)
-12. [已知限制和后续计划](#已知限制和后续计划)
-13. [免责声明](#免责声明)
+10. [FX11 日志提交与辅助工具](#fx11-日志提交与辅助工具)
+11. [日志与实车判断](#日志与实车判断)
+12. [核心库调用](#核心库调用)
+13. [已知限制和后续计划](#已知限制和后续计划)
+14. [免责声明](#免责声明)
 
 ---
 
@@ -94,7 +95,7 @@ targetSdk     = 28
 - “系统应用”开关默认开启，关闭后仅显示第三方应用；
 - 列表中以“系统 · 包名”和“三方 · 包名”区分来源；
 - 可点击任意可启动 App 尝试投屏；
-- “测试投屏”会发送内置测试画面，用于先验证 Display、Surface 和 VirtualDisplay 链路；
+- 点击测试后先显示不依赖录屏授权的官方 Presentation 预检画面；只有用户确认仪表能看到，才继续 MediaProjection、Surface 和 VirtualDisplay 链路；
 - 已建立投屏会话后切换 App 时不会重复弹出 MediaProjection 授权框。
 
 ### 6. 诊断日志
@@ -106,7 +107,7 @@ targetSdk     = 28
 
 没有公共存储权限时自动使用应用专属目录，不影响核心投屏。
 
-从 v1.2.5 起，点击首页“查看日志文件”后可直接选择“分享完整日志”。App 会把设备信息、权限状态、可见 Display、投屏控制器状态、全部本地日志和崩溃堆栈打包为一个 `.txt`，通过 Android 系统分享面板发送到微信、文件传输或蓝牙，不需要先接电脑。
+从 v1.2.7 起，点击首页“查看日志文件”后可直接选择“分享完整日志”。App 会把设备信息、权限状态、可见 Display、投屏控制器状态、全部本地日志和崩溃堆栈打包为一个 `.log` 文件附件。v1.2.8 起还会额外复制一份到 `Download/clusterprojector/`，方便在银河 NOS 分享面板受限时用 LocalSend 直接选择文件。
 
 ---
 
@@ -118,7 +119,7 @@ targetSdk     = 28
 MainActivity
   └─ ScreenCastService 获取 MediaProjection 授权和前台服务
       └─ CastController
-          └─ OverlayWindowHost 在仪表 Display 创建窗口
+          └─ OverlayWindowHost 优先用官方 Presentation 在仪表 Display 创建窗口，失败再回退悬浮窗
               └─ SurfaceView
                   └─ VirtualScreenHost 创建独立 VirtualDisplay
                       └─ ActivityOptions.setLaunchDisplayId() 启动目标 App
@@ -138,7 +139,7 @@ VIRTUAL_DISPLAY_FLAG_PUBLIC
 MainActivity
   └─ ScreenCastService 获取 MediaProjection
       └─ CastController
-          └─ OverlayWindowHost 在仪表 Display 创建窗口
+          └─ OverlayWindowHost 优先用官方 Presentation 在仪表 Display 创建窗口，失败再回退悬浮窗
               └─ MirrorGlSurfaceView
                   └─ MirrorCaptureHost 捕获中控 Display 0
                       └─ OpenGL OES 纹理直接合成到仪表窗口
@@ -189,13 +190,13 @@ VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
 | 首选仪表屏 | Display 3，`1920×532@320dpi` |
 | 备选仪表屏 | Display 4，`1920×532@320dpi` |
 
-默认直出窗口：
+v1.2.6 诊断阶段默认直出窗口：
 
 ```text
-960×266，x=480，y=133
+1920×532，x=0，y=0
 ```
 
-即默认居中于 `1920×532` 仪表长条屏。
+即先全屏输出，最大化确认仪表物理合成层是否接受 Presentation。预检成功后，可通过界面滑块缩小、移动和调节透明度。
 
 镜像模式默认 contain 中控竖屏：高度填满仪表屏，宽度按中控屏宽高比计算，水平居中并保留黑边。
 
@@ -225,10 +226,11 @@ cluster-projector/
 ├── clusterdisplay/
 │   └── src/main/java/org/clusterprojector/display/
 │       ├── CastController.java                # 直出优先 + 自动降级核心
+│       ├── ClusterPresentationProbe.java       # 不依赖录屏授权的官方副屏预检
 │       ├── DisplayEnumerator.java             # Display 枚举与评分
 │       ├── DisplayTarget.java                 # Display 描述对象
 │       ├── Fx11DisplayProfile.java            # FX11 参数、评分、默认窗口
-│       ├── OverlayWindowHost.java             # 仪表 Display 上的窗口宿主
+│       ├── OverlayWindowHost.java             # 仪表 Display 上的 Presentation/悬浮窗宿主
 │       ├── VirtualScreenHost.java             # 直出 VirtualDisplay
 │       ├── MirrorCaptureHost.java             # 中控 Display 0 捕获
 │       ├── MirrorGlSurfaceView.java           # 无编码 OpenGL 镜像渲染和首帧日志
@@ -298,15 +300,17 @@ adb shell appops set org.clusterprojector.app SYSTEM_ALERT_WINDOW allow
 1. 打开“仪表投屏”。
 2. 先处理首页“权限检查”卡片中的缺失权限。
 3. 在“目标显示设备”中选择 `1920×532@320dpi` 的仪表屏。
-4. 点击“测试投屏（显示测试画面）”。
-5. 在系统 MediaProjection 弹窗中人工确认。
-6. 观察仪表是否出现测试画面。
-7. 如果直出失败，等待自动切换到 GL 镜像。
-8. 展开“图层控制”，调整位置、大小和透明度。
-9. 确认测试画面正常后，再点击应用列表中的定制版高德地图或 ICCOA CarLink。
-10. 最后再测试普通第三方 App。
-11. 如果仪表无画面，不要先重启 App，点击“查看日志文件 → 分享完整日志”导出本次诊断包。
-12. 点击“停止投屏”释放会话。
+4. 点击“先预检仪表，再测试投屏”。
+5. 此时先不弹录屏授权，仪表盘应出现全屏闪烁色块和“仪表副屏预检”文字。
+6. 如果仪表看不到预检画面，直接点“没看到”并分享日志；这说明标准 Presentation 也被仪表合成层拦截。
+7. 如果能看到预检画面，点“看到了，继续”，再按提示处理悬浮窗权限并在系统 MediaProjection 弹窗中确认。
+8. 观察仪表是否出现内置测试画面。
+9. 如果 App 直出失败，等待自动切换到 GL 镜像；镜像模式会在中控打开目标 App，再把真实捕获帧送到仪表。
+10. 展开“图层控制”，调整位置、大小和透明度。
+11. 确认测试画面正常后，再点击应用列表中的定制版高德地图或 ICCOA CarLink。
+12. 最后再测试普通第三方 App。
+13. 如果仪表无画面，不要先重启 App，点击“查看日志文件 → 分享完整日志”导出本次诊断包。
+14. 点击“停止投屏”释放会话。
 
 手机只有 Display 0 时，应用会阻止误启动投屏，这是保护逻辑，不代表车机链路异常。
 
@@ -371,6 +375,34 @@ MIUI/HyperOS
 - 直出与镜像的真实性能。
 
 MIUI/HyperOS 可能有独立的“获取应用列表”隐私开关。当前版本会优先通过 `getInstalledApplications()` 合并 Launcher Intent 查询，在测试手机上即使没有手动授予完整应用列表权限，也能列出 97 个可启动应用，其中包含系统/预装应用；如果列表数量异常或为 0，仍需到应用详情中检查该开关。
+
+---
+
+## FX11 日志提交与辅助工具
+
+银河 NOS 可能阉割系统设置或分享面板。为了让实车测试者稳定提交日志，Release 页面同时提供 LocalSend 和授权辅助 APK。详细步骤见：[FX11 实车日志提交指南](docs/LOG_SUBMISSION_FX11.md)。
+
+Release：[v1.2.8-fx11-log-tools](https://github.com/limrbrown74-lab/cluster-projector/releases/tag/v1.2.8)
+
+| 软件 | Release 附件 | 安装位置 | 用途 |
+|---|---|---|---|
+| 仪表投屏 | `cluster-projector-v1.2.8-fx11-log-tools-debug.apk` | 车机 | 主程序 |
+| 银河 OS 系统设置 | `fx11-galaxy-nos-settings-boyue-l.apk` | 车机 | 补回被银河 NOS 阉割的设置/权限入口 |
+| LocalSend | `localsend-1.18.2-android-arm64v8.apk` | 车机 | 通过 Wi-Fi/热点把 `.log` 文件发到手机 |
+| LocalSend | 手机端从应用商店或 LocalSend 官方渠道安装 | 手机 | 接收车机日志 |
+| 权限狗 | `fx11-permission-dog-0.1.0.45.apk` | 车机，可选 | 系统设置入口缺失时辅助授权 |
+| 开发者选项 | `fx11-developer-options-1.058.apk` | 车机，可选 | 打开开发者/调试入口 |
+| 竖屏应用管家 | `fx11-app-manager-1.8.1-portrait.apk` | 车机，可选 | 管理应用、安装包和权限 |
+
+推荐提交流程：
+
+1. 车机安装系统设置、LocalSend 和仪表投屏；手机安装 LocalSend。
+2. 车机和手机连接同一 Wi-Fi/热点。
+3. 在仪表投屏中复现问题后，点击“查看日志文件 → 分享完整日志”。
+4. 系统分享面板选择 LocalSend；如果没有 LocalSend，就在车机 LocalSend 中手动选择 `Download/clusterprojector/clusterprojector-diagnostic-*.log`。
+5. 手机收到 `.log` 文件后再发回。正确文件应以 `clusterprojector-diagnostic-` 开头，不能只有一句 `ClusterProjector FX11 诊断日志`。
+
+辅助 APK 的包名、版本、SHA256 和注意事项见 [FX11 实车日志提交指南](docs/LOG_SUBMISSION_FX11.md) 与 Release 附件 `SHA256SUMS-v1.2.8.txt`。
 
 ---
 
@@ -491,6 +523,34 @@ controller.setAlpha(1.0f);
 ---
 
 ## 版本记录
+
+
+
+### 1.2.8-fx11-log-tools / versionCode 11
+
+- 修复实车日志提交链路：分享时只发送 `.log` 文件附件，不允许分享器退化成纯文本；
+- 点击“分享完整日志”时，除应用私有缓存附件外，会额外复制一份到 `Download/clusterprojector/`，方便 LocalSend 在系统分享面板被阉割时直接选择文件；
+- Release 附带银河 NOS 设置、LocalSend、权限狗、开发者选项、竖屏应用管家等 FX11 调试辅助 APK；
+- README 增加车机/手机 LocalSend 日志提交流程和辅助工具 SHA256 校验值。
+
+### 1.2.7-fx11-probe-logfix / versionCode 10
+
+- 修复“分享完整日志”可能只发送 `ClusterProjector FX11 诊断日志` 一段文字、没有附件的问题；
+- 分享 Intent 改为只携带 `content://` 文件流，MIME 使用 `application/octet-stream`，不再携带 `EXTRA_TEXT`；
+- 诊断包扩展名从 `.txt` 改为 `.log`，更明确地要求系统分享器按文件发送；
+- 调起分享前通过应用自身的只读日志 Provider 查询文件名/大小并读取首字节，提前发现空附件或 Provider 不可读；
+- 保留 v1.2.6 的录屏前 Presentation 仪表预检能力。
+
+### 1.2.6-fx11-presentation-probe / versionCode 9
+
+- 根据 v1.2.5 实车日志调整：普通 overlay 逻辑上位于 Display 3/4，但仪表物理屏没有任何合成输出；
+- 在录屏授权前新增原生 `Presentation` 预检：仪表必须先能看到全屏闪烁色块，才继续后续投屏链路；
+- 输出宿主改为优先使用 Android 官方 `Presentation`，这是普通第三方 App 向受支持副屏输出内容的标准窗口；
+- Presentation 被车机拒绝时，才回退到原 `TYPE_APPLICATION_OVERLAY` 路径；
+- 诊断阶段直出默认使用 1920×532 全屏测试画面，先证明仪表物理合成层接受窗口，确认后再手动缩小；
+- 修正镜像“第一帧”判定：只有 MediaProjection 真正产出并被 GL 消费第一帧后才提示成功，不再把投影建立前的空 GL 自绘误判为已出图；
+- 日志增加 `ClusterProbe`、`host=PRESENTATION/OVERLAY`、Presentation 生命周期和窗口状态，可直接判断标准副屏窗口是否被系统接受；
+- 镜像模式必须收到并消费真实 MediaProjection 帧后才提示第一帧成功，中控打开 App 不再被误判为仪表已出图。
 
 ### 1.2.5-fx11 / versionCode 8
 

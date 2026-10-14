@@ -7,6 +7,7 @@ import android.os.Environment;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.io.FileWriter;
@@ -155,6 +156,7 @@ public final class AppLog {
             if (!f.isFile()) continue;
             String name = f.getName().toLowerCase(Locale.US);
             if ((name.endsWith(".log") || name.endsWith(".txt"))
+                    && !f.getName().startsWith("clusterprojector-diagnostic-")
                     && seen.add(f.getAbsolutePath())) {
                 out.add(f);
             }
@@ -171,7 +173,7 @@ public final class AppLog {
         pruneOldBundles(dir);
 
         File out = new File(dir, "clusterprojector-diagnostic-"
-                + EXPORT_TS.format(new Date()) + ".txt");
+                + EXPORT_TS.format(new Date()) + ".log");
         long total = 0L;
         try (Writer writer = new OutputStreamWriter(new java.io.FileOutputStream(out), "UTF-8");
              PrintWriter pw = new PrintWriter(writer)) {
@@ -216,6 +218,31 @@ public final class AppLog {
             }
         } catch (Exception e) {
             throw new IllegalStateException("导出诊断日志失败: " + e.getMessage(), e);
+        }
+        return out;
+    }
+
+
+    /**
+     * 把诊断包额外复制到公共 Download 目录，方便 LocalSend 等文件工具在系统分享面板被阉割时直接选择。
+     * 失败不影响通过应用内 ContentProvider 分享。
+     */
+    public static File publishDiagnosticBundle(File cachedBundle) {
+        File dir = publicLogDir();
+        if (dir == null) return null;
+        pruneOldBundles(dir);
+        File out = new File(dir, cachedBundle.getName());
+        byte[] buffer = new byte[16 * 1024];
+        try (FileInputStream in = new FileInputStream(cachedBundle);
+             FileOutputStream fos = new FileOutputStream(out)) {
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                fos.write(buffer, 0, read);
+            }
+            fos.getFD().sync();
+        } catch (Exception e) {
+            android.util.Log.w("AppLog", "publish diagnostic bundle failed: " + dir, e);
+            return null;
         }
         return out;
     }

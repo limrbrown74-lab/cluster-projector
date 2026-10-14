@@ -17,6 +17,7 @@ public final class CastController {
     public static final int MODE_MIRROR = 1;
 
     private final Context context;
+    private final Context ownerContext;
     private final DisplayTarget clusterInfo;
     private final Display clusterDisplay;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -49,6 +50,7 @@ public final class CastController {
     }
 
     public CastController(Context context, DisplayTarget clusterInfo, Display clusterDisplay) {
+        this.ownerContext = context;
         this.context = context.getApplicationContext();
         this.clusterInfo = clusterInfo;
         this.clusterDisplay = clusterDisplay;
@@ -64,6 +66,14 @@ public final class CastController {
     public WindowGeometry getBounds() { return bounds; }
     public float getAlpha() { return opacity; }
     public String getDiagnosticState() { return stateSnapshot(); }
+
+    public String getHostName() {
+        return overlay == null ? "NONE" : overlay.getHost().name();
+    }
+
+    public String getHostDetail() {
+        return overlay == null ? "overlay not created" : overlay.getHostDetail();
+    }
 
     public int getVirtualDisplayId() {
         if (mode == MODE_MIRROR) return Display.DEFAULT_DISPLAY;
@@ -92,7 +102,7 @@ public final class CastController {
                 + "@" + centerMetrics.densityDpi + " directBounds=" + bounds
                 + " projection=" + (projection != null));
         overlay = new OverlayWindowHost(
-                context,
+                ownerContext,
                 clusterDisplay,
                 clusterInfo.getWidth(),
                 clusterInfo.getHeight(),
@@ -438,6 +448,8 @@ public final class CastController {
     private String stateSnapshot() {
         return "active=" + active + " mode=" + modeName(mode)
                 + " overlay=" + (overlay != null && overlay.isAdded())
+                + " host=" + getHostName()
+                + " hostDetail=" + getHostDetail()
                 + " directReady=" + directReady
                 + " directSurfaceAttached=" + directSurfaceAttached
                 + " mirrorCaptureReady=" + mirrorReady

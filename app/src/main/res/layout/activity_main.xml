@@ -199,7 +199,7 @@
         android:layout_width="match_parent"
         android:layout_height="42dp"
         android:minHeight="42dp"
-        android:text="测试投屏（显示测试画面）"
+        android:text="先预检仪表，再测试投屏"
         android:textSize="13sp"
         android:textColor="#FFFFFF"
         android:background="@drawable/btn_primary"

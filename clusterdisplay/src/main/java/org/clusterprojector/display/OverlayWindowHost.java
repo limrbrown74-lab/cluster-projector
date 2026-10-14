@@ -1,44 +1,56 @@
 package org.clusterprojector.display;
 
+import android.app.Activity;
+import android.app.Presentation;
 import android.content.Context;
+import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.Display;
 import android.view.Gravity;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 
 /**
- * 仪表 Display 上的置顶窗口。
+ * 仪表 Display 上的画面宿主。
  *
- * <p>支持两种内容：
- * <ul>
- *     <li>DIRECT：第三方 App 直出到普通 SurfaceView；</li>
- *     <li>MIRROR：MediaProjection 经 OpenGL 零编码镜像到 GLSurfaceView。</li>
- * </ul>
+ * <p>优先使用 Android 官方 {@link Presentation}。FX11/ecarx 对普通
+ * TYPE_APPLICATION_OVERLAY 可能“允许 addView 但不进入仪表物理合成层”，
+ * Presentation 是普通第三方 App 向副屏输出的标准方式。若 Presentation 被系统拒绝，
+ * 再回退到原来的 DisplayContext + overlay。
  */
 public final class OverlayWindowHost {
 
     private static final String TAG = "ClusterOverlay";
 
     public enum Mode { DIRECT, MIRROR }
+    public enum Host { PRESENTATION, OVERLAY }
 
+    private final Context ownerContext;
     private final Context appContext;
-    private final android.view.Display display;
+    private final Display display;
     private final int directBufferWidth;
     private final int directBufferHeight;
     private final int mirrorSourceWidth;
     private final int mirrorSourceHeight;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
+    private Host host = Host.OVERLAY;
+    private String hostDetail = "NOT_STARTED";
+    private ClusterPresentation presentation;
     private Context windowContext;
     private WindowManager windowMgr;
     private FrameLayout container;
     private WindowManager.LayoutParams windowParams;
+    private WindowGeometry initialBounds;
     private boolean added;
     private float opacity = 1f;
     private Mode mode = Mode.DIRECT;
@@ -91,23 +103,18 @@ public final class OverlayWindowHost {
         void onMirrorFirstFrame();
     }
 
-    public OverlayWindowHost(Context context, android.view.Display display,
+    public OverlayWindowHost(Context context, Display display,
             int directBufferWidth, int directBufferHeight,
             int mirrorSourceWidth, int mirrorSourceHeight,
             WindowGeometry initialBounds) {
+        this.ownerContext = context;
         this.appContext = context.getApplicationContext();
         this.display = display;
         this.directBufferWidth = directBufferWidth;
         this.directBufferHeight = directBufferHeight;
         this.mirrorSourceWidth = mirrorSourceWidth;
         this.mirrorSourceHeight = mirrorSourceHeight;
-        setInitialBounds(initialBounds);
-    }
-
-    private WindowGeometry initialBounds;
-
-    private void setInitialBounds(WindowGeometry bounds) {
-        this.initialBounds = bounds;
+        this.initialBounds = initialBounds;
     }
 
     public void setSurfaceCallback(SurfaceCallback callback) {
@@ -116,10 +123,55 @@ public final class OverlayWindowHost {
 
     public synchronized void start() {
         if (added) return;
+        if (tryStartPresentation()) return;
+        startOverlayFallback();
+    }
+
+    private boolean tryStartPresentation() {
+        if (!(ownerContext instanceof Activity)) {
+            ClusterLog.w(TAG, "Presentation unavailable: owner is not Activity: "
+                    + ownerContext.getClass().getName());
+            return false;
+        }
+        try {
+            host = Host.PRESENTATION;
+            presentation = new ClusterPresentation(ownerContext, display);
+            ClusterLog.i(TAG, "Presentation show begin: display=" + display.getDisplayId()
+                    + " flags=0x" + Integer.toHexString(display.getFlags())
+                    + " bounds=" + initialBounds);
+            presentation.show();
+            hostDetail = "PRESENTATION_SHOWN";
+            container = presentation.rootContainer;
+            added = true;
+            ClusterLog.i(TAG, "Presentation shown on display=" + display.getDisplayId()
+                    + " bounds=" + initialBounds);
+            configureContainer();
+            showDirectLocked();
+            final FrameLayout postedContainer = container;
+            postedContainer.post(() -> logContainerLayout("Presentation"));
+            post(() -> logPresentationState("after-show-0ms"));
+            mainHandler.postDelayed(() -> logPresentationState("after-show-500ms"), 500L);
+            mainHandler.postDelayed(() -> logPresentationState("after-show-2000ms"), 2000L);
+            return true;
+        } catch (Throwable t) {
+            host = Host.OVERLAY;
+            hostDetail = "PRESENTATION_REJECTED: " + t.getClass().getSimpleName()
+                    + ": " + t.getMessage();
+            ClusterLog.w(TAG, "Presentation rejected, fallback to overlay: display="
+                    + display.getDisplayId() + " detail=" + hostDetail, t);
+            safeDismissPresentation();
+            return false;
+        }
+    }
+
+    private void startOverlayFallback() {
+        host = Host.OVERLAY;
+        hostDetail = "OVERLAY_FALLBACK_BUILDING";
         buildWindowContextAndManager();
         container = new FrameLayout(windowContext);
         container.setClipChildren(true);
         buildWindowParams();
+        configureContainer();
         showDirectLocked();
         try {
             ClusterLog.i(TAG, "addView begin: display=" + display.getDisplayId()
@@ -129,21 +181,16 @@ public final class OverlayWindowHost {
                     + " token=" + windowParams.token);
             windowMgr.addView(container, windowParams);
             added = true;
+            hostDetail = "OVERLAY_ADDED";
             ClusterLog.i(TAG, "overlay added to display=" + display.getDisplayId()
                     + " bounds=" + initialBounds);
             final FrameLayout postedContainer = container;
-            postedContainer.post(() -> ClusterLog.i(TAG, "container layout: added=" + added
-                    + " width=" + postedContainer.getWidth() + " height=" + postedContainer.getHeight()
-                    + " isAttached=" + postedContainer.isAttachedToWindow()
-                    + " visibility=" + postedContainer.getVisibility()
-                    + " windowVisibility=" + postedContainer.getWindowVisibility()
-                    + " viewDisplay=" + safeDisplayId(postedContainer)
-                    + " requestedDisplay=" + display.getDisplayId()));
+            postedContainer.post(() -> logContainerLayout("Overlay"));
         } catch (Throwable t) {
             added = false;
             ClusterLog.e(TAG, "addView to display " + display.getDisplayId() + " failed", t);
             throw new IllegalStateException("无法在 Display " + display.getDisplayId()
-                    + " 创建仪表悬浮窗，请检查悬浮窗权限和车机多屏策略", t);
+                    + " 创建仪表输出窗口，请检查副屏 Presentation/悬浮窗权限和车机多屏策略", t);
         }
     }
 
@@ -151,19 +198,31 @@ public final class OverlayWindowHost {
         return added;
     }
 
+    public Host getHost() {
+        return host;
+    }
+
+    public String getHostDetail() {
+        return hostDetail;
+    }
+
     public synchronized void stop() {
-        ClusterLog.i(TAG, "stop overlay: added=" + added + " mode=" + mode
-                + " display=" + display.getDisplayId());
+        ClusterLog.i(TAG, "stop output host: added=" + added + " host=" + host
+                + " mode=" + mode + " display=" + display.getDisplayId());
         if (!added) return;
         try {
             removeMirrorLocked();
             removeDirectLocked();
-            windowMgr.removeView(container);
+            if (host == Host.PRESENTATION) {
+                safeDismissPresentation();
+            } else if (windowMgr != null && container != null) {
+                windowMgr.removeView(container);
+            }
         } catch (Throwable t) {
-            ClusterLog.w(TAG, "remove overlay failed", t);
+            ClusterLog.w(TAG, "remove output host failed", t);
         } finally {
             added = false;
-            ClusterLog.i(TAG, "overlay resources cleared");
+            ClusterLog.i(TAG, "output host resources cleared");
             container = null;
             directView = null;
             mirrorView = null;
@@ -186,37 +245,57 @@ public final class OverlayWindowHost {
     }
 
     public synchronized void setBounds(WindowGeometry bounds) {
-        if (!added || windowParams == null) {
-            ClusterLog.w(TAG, "setBounds ignored: added=" + added + " params="
-                    + (windowParams != null) + " bounds=" + bounds);
+        if (!added || container == null) {
+            ClusterLog.w(TAG, "setBounds ignored: added=" + added + " bounds=" + bounds);
             return;
         }
-        ClusterLog.i(TAG, "update overlay bounds: " + bounds + " display="
-                + display.getDisplayId());
-        windowParams.x = bounds.x;
-        windowParams.y = bounds.y;
-        windowParams.width = bounds.width;
-        windowParams.height = bounds.height;
-        windowMgr.updateViewLayout(container, windowParams);
+        initialBounds = bounds;
+        if (host == Host.PRESENTATION) {
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) container.getLayoutParams();
+            lp.width = bounds.width;
+            lp.height = bounds.height;
+            lp.leftMargin = bounds.x;
+            lp.topMargin = bounds.y;
+            container.setLayoutParams(lp);
+            ClusterLog.i(TAG, "update Presentation bounds: " + bounds + " display="
+                    + display.getDisplayId());
+        } else if (windowParams != null) {
+            ClusterLog.i(TAG, "update overlay bounds: " + bounds + " display="
+                    + display.getDisplayId());
+            windowParams.x = bounds.x;
+            windowParams.y = bounds.y;
+            windowParams.width = bounds.width;
+            windowParams.height = bounds.height;
+            windowMgr.updateViewLayout(container, windowParams);
+        }
     }
 
     public synchronized void setAlpha(float alpha) {
         opacity = Math.max(0f, Math.min(1f, alpha));
-        if (!added || windowParams == null) return;
-        windowParams.alpha = opacity;
-        windowMgr.updateViewLayout(container, windowParams);
+        if (!added || container == null) return;
+        container.setAlpha(opacity);
+        if (host == Host.OVERLAY && windowParams != null) {
+            windowParams.alpha = opacity;
+            windowMgr.updateViewLayout(container, windowParams);
+        }
+    }
+
+    private void configureContainer() {
+        container.setClipChildren(true);
+        container.setAlpha(opacity);
     }
 
     private void showDirectLocked() {
         mode = Mode.DIRECT;
-        ClusterLog.i(TAG, "show DIRECT view: buffer="
+        ClusterLog.i(TAG, "show DIRECT view: host=" + host + " buffer="
                 + directBufferWidth + "x" + directBufferHeight);
         removeMirrorLocked();
         if (directView != null) {
             ClusterLog.i(TAG, "direct view already attached");
             return;
         }
-        directView = new SurfaceView(windowContext);
+        Context viewContext = host == Host.PRESENTATION ? presentation.getContext() : windowContext;
+        directView = new SurfaceView(viewContext);
         SurfaceHolder holder = directView.getHolder();
         holder.addCallback(directHolderCallback);
         holder.setFormat(PixelFormat.OPAQUE);
@@ -239,7 +318,7 @@ public final class OverlayWindowHost {
 
     private void showMirrorLocked() {
         mode = Mode.MIRROR;
-        ClusterLog.i(TAG, "show MIRROR GL view: source="
+        ClusterLog.i(TAG, "show MIRROR GL view: host=" + host + " source="
                 + mirrorSourceWidth + "x" + mirrorSourceHeight);
         removeDirectLocked();
         if (mirrorView != null) {
@@ -247,7 +326,8 @@ public final class OverlayWindowHost {
             return;
         }
 
-        mirrorView = new MirrorGlSurfaceView(windowContext, mirrorSourceWidth, mirrorSourceHeight);
+        Context viewContext = host == Host.PRESENTATION ? presentation.getContext() : windowContext;
+        mirrorView = new MirrorGlSurfaceView(viewContext, mirrorSourceWidth, mirrorSourceHeight);
         ClusterLog.i(TAG, "create MIRROR GLSurfaceView: source="
                 + mirrorSourceWidth + "x" + mirrorSourceHeight);
         mirrorView.setMirrorCallback(new MirrorGlSurfaceView.Callback() {
@@ -269,7 +349,7 @@ public final class OverlayWindowHost {
 
             @Override public void onFirstFrame() {
                 post(() -> {
-                    ClusterLog.i(TAG, "MIRROR first frame delivered to GLSurfaceView");
+                    ClusterLog.i(TAG, "MIRROR first real captured frame delivered to " + host);
                     if (surfaceCallback != null && mode == Mode.MIRROR) {
                         surfaceCallback.onMirrorFirstFrame();
                     }
@@ -318,12 +398,9 @@ public final class OverlayWindowHost {
                 + " appContext=" + appContext.getClass().getName());
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
-                // 标准 Android 11 公开 API。窗口类型必须与 addView 的 LayoutParams.type 一致。
                 windowContext = appContext.createWindowContext(display, type, null);
                 ClusterLog.i(TAG, "using WindowContext for display=" + display.getDisplayId());
             } catch (LinkageError | RuntimeException e) {
-                // 部分车机虽然声明 sdk=30，但厂商裁剪/改造 framework.jar 后会缺失该方法，
-                // 实车日志表现为 NoSuchMethodError。此时回退到 DisplayContext。
                 ClusterLog.w(TAG, "createWindowContext unavailable, fallback to DisplayContext"
                         + " display=" + display.getDisplayId(), e);
                 windowContext = appContext.createDisplayContext(display);
@@ -366,9 +443,63 @@ public final class OverlayWindowHost {
                 : WindowManager.LayoutParams.TYPE_PHONE;
     }
 
+    private void safeDismissPresentation() {
+        if (presentation == null) return;
+        try {
+            presentation.dismiss();
+        } catch (Throwable t) {
+            ClusterLog.w(TAG, "dismiss Presentation failed", t);
+        }
+        presentation = null;
+    }
+
+    private void logPresentationState(String stage) {
+        if (presentation == null) {
+            ClusterLog.i(TAG, "Presentation state[" + stage + "]: presentation=null");
+            return;
+        }
+        try {
+            View decor = presentation.getWindow() == null ? null
+                    : presentation.getWindow().peekDecorView();
+            int[] location = new int[]{Integer.MIN_VALUE, Integer.MIN_VALUE};
+            if (decor != null && decor.isAttachedToWindow()) {
+                decor.getLocationOnScreen(location);
+            }
+            Display actual = container != null && container.getDisplay() != null
+                    ? container.getDisplay() : display;
+            ClusterLog.i(TAG, "Presentation state[" + stage + "] showing="
+                    + presentation.isShowing()
+                    + " host=" + host
+                    + " display=" + actual.getDisplayId()
+                    + " displayState=" + actual.getState()
+                    + " flags=0x" + Integer.toHexString(actual.getFlags())
+                    + " containerAttached=" + (container != null && container.isAttachedToWindow())
+                    + " containerSize=" + (container == null ? -1 : container.getWidth()) + "x"
+                    + (container == null ? -1 : container.getHeight())
+                    + " decorAttached=" + (decor != null && decor.isAttachedToWindow())
+                    + " decorSize=" + (decor == null ? -1 : decor.getWidth()) + "x"
+                    + (decor == null ? -1 : decor.getHeight())
+                    + " decorLoc=" + location[0] + "," + location[1]
+                    + " detail=" + hostDetail);
+        } catch (Throwable t) {
+            ClusterLog.w(TAG, "Presentation state log failed stage=" + stage, t);
+        }
+    }
+
+    private void logContainerLayout(String hostName) {
+        ClusterLog.i(TAG, hostName + " container layout: added=" + added
+                + " host=" + host + " width=" + container.getWidth()
+                + " height=" + container.getHeight()
+                + " isAttached=" + container.isAttachedToWindow()
+                + " visibility=" + container.getVisibility()
+                + " windowVisibility=" + container.getWindowVisibility()
+                + " viewDisplay=" + safeDisplayId(container)
+                + " requestedDisplay=" + display.getDisplayId());
+    }
+
     private static int safeDisplayId(android.view.View view) {
         try {
-            android.view.Display d = view.getDisplay();
+            Display d = view.getDisplay();
             return d == null ? Integer.MIN_VALUE : d.getDisplayId();
         } catch (Throwable t) {
             return Integer.MIN_VALUE;
@@ -377,5 +508,71 @@ public final class OverlayWindowHost {
 
     private void post(Runnable runnable) {
         mainHandler.post(runnable);
+    }
+
+    private final class ClusterPresentation extends Presentation {
+        private FrameLayout rootContainer;
+
+        ClusterPresentation(Context context, Display display) {
+            super(context, display);
+        }
+
+        @Override protected void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            ClusterLog.i(TAG, "Presentation onCreate begin: display="
+                    + getDisplay().getDisplayId());
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            lp.width = WindowManager.LayoutParams.MATCH_PARENT;
+            lp.height = WindowManager.LayoutParams.MATCH_PARENT;
+            // 保持 Android 官方 Presentation 的默认焦点/触摸策略，只保留全屏布局和亮屏。
+            // ecarx 对非焦点 overlay 可能有额外过滤；标准 Presentation 不应主动加上 overlay 风格 flags。
+            lp.flags |= WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+            lp.gravity = Gravity.TOP | Gravity.LEFT;
+            getWindow().setAttributes(lp);
+            getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            getWindow().setFormat(PixelFormat.TRANSLUCENT);
+            getWindow().setLayout(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT);
+
+            FrameLayout presentationRoot = new FrameLayout(getContext());
+            presentationRoot.setBackgroundColor(Color.TRANSPARENT);
+            rootContainer = new FrameLayout(getContext());
+            rootContainer.setBackgroundColor(Color.TRANSPARENT);
+            FrameLayout.LayoutParams contentLp = new FrameLayout.LayoutParams(
+                    initialBounds.width, initialBounds.height);
+            contentLp.leftMargin = initialBounds.x;
+            contentLp.topMargin = initialBounds.y;
+            contentLp.gravity = Gravity.TOP | Gravity.LEFT;
+            presentationRoot.addView(rootContainer, contentLp);
+            setContentView(presentationRoot);
+            ClusterLog.i(TAG, "Presentation onCreate: display=" + getDisplay().getDisplayId()
+                    + " displayFlags=0x" + Integer.toHexString(getDisplay().getFlags())
+                    + " bounds=" + initialBounds);
+        }
+
+        @Override protected void onStart() {
+            super.onStart();
+            ClusterLog.i(TAG, "Presentation onStart: display=" + getDisplay().getDisplayId());
+        }
+
+        @Override protected void onStop() {
+            ClusterLog.i(TAG, "Presentation onStop: display=" + getDisplay().getDisplayId());
+            super.onStop();
+        }
+
+        @Override public void onDisplayChanged() {
+            super.onDisplayChanged();
+            ClusterLog.i(TAG, "Presentation onDisplayChanged: display="
+                    + getDisplay().getDisplayId() + " state=" + getDisplay().getState()
+                    + " flags=0x" + Integer.toHexString(getDisplay().getFlags()));
+        }
+
+        @Override public void onDisplayRemoved() {
+            ClusterLog.w(TAG, "Presentation onDisplayRemoved: display="
+                    + getDisplay().getDisplayId());
+            super.onDisplayRemoved();
+        }
     }
 }

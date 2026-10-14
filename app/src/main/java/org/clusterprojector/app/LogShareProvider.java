@@ -46,7 +46,9 @@ public class LogShareProvider extends ContentProvider {
     }
 
     @Override public String getType(Uri uri) {
-        return "text/plain";
+        // 使用二进制附件 MIME，避免微信/车机分享器把 Intent 当成纯文本消息。
+        // 文件扩展名仍为 .log，接收端可直接用文本编辑器打开。
+        return "application/octet-stream";
     }
 
     @Override public Uri insert(Uri uri, ContentValues values) {
@@ -72,8 +74,9 @@ public class LogShareProvider extends ContentProvider {
 
     @Override public AssetFileDescriptor openAssetFile(Uri uri, String mode)
             throws FileNotFoundException {
-        return new AssetFileDescriptor(openFile(uri, "r"), 0,
-                AssetFileDescriptor.UNKNOWN_LENGTH);
+        File file = resolveFile(uri);
+        if (file == null || !file.isFile()) throw new FileNotFoundException("Unknown log: " + uri);
+        return new AssetFileDescriptor(openFile(uri, "r"), 0, file.length());
     }
 
     private File resolveFile(Uri uri) {

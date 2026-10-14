@@ -2,9 +2,11 @@ package org.clusterprojector.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.drawable.Drawable;
@@ -14,6 +16,7 @@ import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.view.Display;
 import android.view.LayoutInflater;
@@ -32,6 +35,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import org.clusterprojector.display.CastController;
+import org.clusterprojector.display.ClusterPresentationProbe;
 import org.clusterprojector.display.DisplayEnumerator;
 import org.clusterprojector.display.DisplayTarget;
 import org.clusterprojector.display.WindowGeometry;
@@ -74,15 +78,15 @@ public class MainActivity extends Activity {
     private boolean projectionAfterOverlay;
     private boolean displayListInitialized;
     private int launchableAppCount = -1;
+    private int presentationProbePassedDisplayId = Integer.MIN_VALUE;
+    private ClusterPresentationProbe presentationProbe;
     private int systemAppCount;
     private final List<AppEntry> allLaunchableApps = new ArrayList<>();
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         CrashHandler.install();
-        AppLog.i("MainActivity", "onCreate, sdk=" + Build.VERSION.SDK_INT
-                + " displayId=" + (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
-                        ? String.valueOf(getDisplay().getDisplayId()) : "n/a"));
+        logRuntimeVersion();
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
@@ -126,7 +130,7 @@ public class MainActivity extends Activity {
                 if (projecting && controller != null && controller.isRunning()) {
                     controller.launchApp(entry.packageName);
                 } else {
-                    requestProjection();
+                    startProjectionFlow();
                 }
             });
             displaySpinner = findViewById(R.id.displaySpinner);
@@ -169,6 +173,32 @@ public class MainActivity extends Activity {
         }
     }
 
+
+    private void logRuntimeVersion() {
+        String version = "unknown";
+        long versionCode = -1;
+        try {
+            PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            version = info.versionName;
+            versionCode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                    ? info.getLongVersionCode() : info.versionCode;
+        } catch (Throwable t) {
+            AppLog.w("MainActivity", "read package version failed: " + t);
+        }
+        String displayId = "n/a";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && getDisplay() != null) {
+            displayId = String.valueOf(getDisplay().getDisplayId());
+        }
+        AppLog.i("MainActivity", "runtime version=" + version + "(" + versionCode + ")"
+                + " sdk=" + Build.VERSION.SDK_INT
+                + " displayId=" + displayId
+                + " brand=" + Build.BRAND
+                + " model=" + Build.MODEL
+                + " device=" + Build.DEVICE
+                + " product=" + Build.PRODUCT
+                + " fingerprint=" + Build.FINGERPRINT);
+    }
+
     private void toggleControls() {
         if (controlsContent == null) return;
         controlsContent.setVisibility(controlsContent.getVisibility() == View.VISIBLE
@@ -189,8 +219,9 @@ public class MainActivity extends Activity {
                             .append("  (").append(Math.max(1, f.length() / 1024)).append("KB)\n");
                 }
             }
-            sb.append("\n请点击“分享完整日志”，选择微信/文件传输等方式导出；"
-                    + "导出的文件已包含当前设备、权限、Display、投屏链路和崩溃堆栈。");
+            sb.append("\n请点击“分享完整日志”，选择 LocalSend/微信等按文件发送；");
+            sb.append("\n诊断包扩展名应为 .log，并会额外保存到 Download/clusterprojector/，");
+            sb.append("\n方便在银河 NOS 分享面板受限时用 LocalSend 直接选择文件。");
             new android.app.AlertDialog.Builder(this)
                     .setTitle("诊断日志")
                     .setMessage(sb)
@@ -218,33 +249,49 @@ public class MainActivity extends Activity {
     }
 
     private void shareDiagnosticLog() {
-        Toast.makeText(this, "正在整理完整诊断日志...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "正在整理完整诊断日志文件...", Toast.LENGTH_SHORT).show();
         AppLog.i("MainActivity", "export diagnostic bundle requested");
         String runtimeInfo = buildDiagnosticInfo();
         new Thread(() -> {
             try {
+                // 先写一条明确的边界日志并等待落盘，确保本次分享文件包含点击分享前的最新状态。
+                String boundary = "diagnostic bundle boundary " + System.currentTimeMillis();
+                AppLog.i("MainActivity", boundary);
+                SystemClock.sleep(120L);
+
                 java.io.File file = AppLog.exportDiagnosticBundle(this, runtimeInfo);
+                java.io.File publicFile = AppLog.publishDiagnosticBundle(file);
+                AppLog.i("MainActivity", "diagnostic public copy: "
+                        + (publicFile == null ? "unavailable" : publicFile.getAbsolutePath()));
                 Uri uri = new Uri.Builder()
                         .scheme("content")
                         .authority(getPackageName() + ".logprovider")
                         .appendPath("diagnostic")
                         .appendPath(file.getName())
                         .build();
+                verifySharedLogFile(file, uri);
+
                 Intent send = new Intent(Intent.ACTION_SEND);
-                send.setType("text/plain");
+                // 关键：只发二进制文件附件，不能放 EXTRA_TEXT；否则部分微信/车机分享器只发送文字。
+                send.setType("application/octet-stream");
                 send.putExtra(Intent.EXTRA_STREAM, uri);
-                send.putExtra(Intent.EXTRA_SUBJECT, "ClusterProjector 诊断日志 " + file.getName());
-                send.putExtra(Intent.EXTRA_TEXT, "ClusterProjector FX11 诊断日志");
                 send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 send.setClipData(android.content.ClipData.newUri(
-                        getContentResolver(), "diagnostic log", uri));
-                Intent chooser = Intent.createChooser(send, "分享完整诊断日志");
-                chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                AppLog.i("MainActivity", "diagnostic bundle exported: " + file.getAbsolutePath()
-                        + " size=" + file.length() + " uri=" + uri);
+                        getContentResolver(), file.getName(), uri));
+
+                Intent chooser = Intent.createChooser(send, "发送完整诊断日志文件");
+                chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_ACTIVITY_NEW_TASK);
+                AppLog.i("MainActivity", "diagnostic file ready to share: "
+                        + file.getAbsolutePath() + " size=" + file.length()
+                        + " uri=" + uri + " mime=" + getContentResolver().getType(uri));
                 runOnUiThread(() -> {
                     try {
                         startActivity(chooser);
+                        String savedHint = publicFile == null ? ""
+                                : "\n备用文件位置：Download/clusterprojector/" + publicFile.getName();
+                        Toast.makeText(this, "请选择 LocalSend/微信等发送文件，文件名："
+                                + file.getName() + savedHint, Toast.LENGTH_LONG).show();
                     } catch (Throwable t) {
                         AppLog.e("MainActivity", "调起系统分享失败", t);
                         Toast.makeText(this, "无法调起分享：" + t.getMessage(), Toast.LENGTH_LONG).show();
@@ -258,12 +305,62 @@ public class MainActivity extends Activity {
         }, "diagnostic-export").start();
     }
 
+    /** 发送前通过 ContentResolver 反向校验，确保外部应用拿到的是真实文件而不是空 Uri。 */
+    private void verifySharedLogFile(java.io.File file, Uri uri) throws Exception {
+        if (!file.isFile() || file.length() <= 0) {
+            throw new IllegalStateException("诊断文件不存在或为空: " + file);
+        }
+
+        String providerType = getContentResolver().getType(uri);
+        String providerName = null;
+        long providerSize = -1L;
+        android.database.Cursor cursor = getContentResolver().query(
+                uri,
+                new String[]{android.provider.OpenableColumns.DISPLAY_NAME,
+                        android.provider.OpenableColumns.SIZE},
+                null, null, null);
+        try {
+            if (cursor != null && cursor.moveToFirst()) {
+                int nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                int sizeIndex = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE);
+                if (nameIndex >= 0) providerName = cursor.getString(nameIndex);
+                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) providerSize = cursor.getLong(sizeIndex);
+            }
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+
+        byte[] firstBytes = new byte[64];
+        int read;
+        try (java.io.InputStream in = getContentResolver().openInputStream(uri)) {
+            if (in == null) throw new IllegalStateException("Provider 返回空输入流: " + uri);
+            read = in.read(firstBytes);
+        }
+        if (read <= 0) throw new IllegalStateException("无法通过分享 Provider 读取日志内容: " + uri);
+        if (!file.getName().equals(providerName)) {
+            throw new IllegalStateException("Provider 文件名不匹配: file=" + file.getName()
+                    + ", provider=" + providerName);
+        }
+        if (providerSize != file.length()) {
+            throw new IllegalStateException("Provider 文件大小不匹配: file=" + file.length()
+                    + ", provider=" + providerSize);
+        }
+        AppLog.i("MainActivity", "share provider verified: name=" + providerName
+                + " size=" + providerSize + " mime=" + providerType
+                + " firstByteCount=" + read);
+    }
+
     private String buildDiagnosticInfo() {
         StringBuilder sb = new StringBuilder();
         sb.append("selectedDisplay=").append(targetDisplay).append('\n')
                 .append("resolvedDisplay=").append(targetDisplayObj == null
                         ? "null" : targetDisplayObj.getDisplayId()).append('\n')
                 .append("projecting=").append(projecting).append('\n')
+                .append("presentationPreflightPassedDisplay=")
+                .append(presentationProbePassedDisplayId == Integer.MIN_VALUE
+                        ? "none" : presentationProbePassedDisplayId).append('\n')
+                .append("presentationProbeShowing=")
+                .append(presentationProbe != null && presentationProbe.isShowing()).append('\n')
                 .append("controllerRunning=").append(controller != null && controller.isRunning()).append('\n')
                 .append("controllerState=").append(controller == null
                         ? "null" : controller.getDiagnosticState()).append('\n')
@@ -442,6 +539,9 @@ public class MainActivity extends Activity {
             @Override public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
                 targetDisplay = displays.get(pos);
                 targetDisplayObj = displayEnumerator.resolveDisplay(targetDisplay);
+                if (targetDisplay.getDisplayId() != presentationProbePassedDisplayId) {
+                    presentationProbePassedDisplayId = Integer.MIN_VALUE;
+                }
                 AppLog.i("MainActivity", "选择 Display: " + targetDisplay
                         + " resolved=" + (targetDisplayObj != null));
                 setStatus(targetDisplay.toString());
@@ -539,7 +639,7 @@ public class MainActivity extends Activity {
             // MediaProjection 没有普通应用可直接进入的设置页，只能再次发起系统授权弹窗。
             pendingPackage = null;
             startTestAfterProjection = true;
-            requestProjection();
+            startProjectionFlow();
             return;
         }
 
@@ -655,6 +755,84 @@ public class MainActivity extends Activity {
         AppLog.i("MainActivity", "投屏前申请权限: " + missing);
         requestPermissions(missing.toArray(new String[0]), REQ_PROJECTION_PERMISSIONS);
         return false;
+    }
+
+    private void startProjectionFlow() {
+        targetDisplayObj = displayEnumerator.resolveDisplay(targetDisplay);
+        if (targetDisplay == null || targetDisplay.isDefault() || targetDisplayObj == null) {
+            clearPendingProjectionAction();
+            Toast.makeText(this, "未选择可用的仪表 Display（FX11 应为 1920x532）",
+                    Toast.LENGTH_LONG).show();
+            AppLog.e("MainActivity", "Display 不可见或不是仪表: " + targetDisplay);
+            return;
+        }
+        if (presentationProbePassedDisplayId == targetDisplayObj.getDisplayId()) {
+            AppLog.i("MainActivity", "Presentation preflight already passed: display="
+                    + targetDisplayObj.getDisplayId());
+            requestProjection();
+            return;
+        }
+        showPresentationPreflight();
+    }
+
+    private void showPresentationPreflight() {
+        dismissPresentationProbe("start new preflight");
+        if (targetDisplayObj == null) {
+            setStatus("未选择可用的仪表 Display");
+            return;
+        }
+        try {
+            AppLog.i("MainActivity", "Presentation preflight begin: target=" + targetDisplay
+                    + " display=" + targetDisplayObj.getDisplayId());
+            presentationProbe = new ClusterPresentationProbe(this, targetDisplayObj);
+            presentationProbe.show();
+            setStatus("请看仪表盘：正在显示全屏副屏预检画面");
+
+            new AlertDialog.Builder(this)
+                    .setTitle("仪表盘预检")
+                    .setMessage("请保持车辆安全停放，观察仪表盘是否出现全屏闪烁色块和“仪表副屏预检”文字。\n\n"
+                            + "看到了：说明官方副屏窗口可用，再继续录屏授权；\n"
+                            + "没看到：说明仪表合成层拦截了标准 Presentation，不能继续误判为投屏成功。")
+                    .setCancelable(false)
+                    .setPositiveButton("看到了，继续", (dialog, which) -> {
+                        if (targetDisplayObj != null) {
+                            presentationProbePassedDisplayId = targetDisplayObj.getDisplayId();
+                        }
+                        dismissPresentationProbe("user confirmed visible");
+                        setStatus("预检通过，正在发起录屏授权…");
+                        requestProjection();
+                    })
+                    .setNegativeButton("没看到", (dialog, which) -> {
+                        presentationProbePassedDisplayId = Integer.MIN_VALUE;
+                        dismissPresentationProbe("user confirmed invisible");
+                        clearPendingProjectionAction();
+                        setStatus("预检失败：仪表盘没有显示标准 Presentation");
+                        Toast.makeText(this, "仪表盘未显示预检画面，已停止继续投屏，请分享完整日志",
+                                Toast.LENGTH_LONG).show();
+                        showLogs();
+                    })
+                    .setNeutralButton("取消", (dialog, which) -> {
+                        presentationProbePassedDisplayId = Integer.MIN_VALUE;
+                        dismissPresentationProbe("user cancelled preflight");
+                        clearPendingProjectionAction();
+                        setStatus("已取消仪表预检");
+                    })
+                    .show();
+        } catch (Throwable t) {
+            presentationProbePassedDisplayId = Integer.MIN_VALUE;
+            dismissPresentationProbe("preflight show failed");
+            clearPendingProjectionAction();
+            AppLog.e("MainActivity", "Presentation preflight failed", t);
+            setStatus("仪表预检被系统拒绝：" + t.getMessage());
+            Toast.makeText(this, "仪表预检被系统拒绝：" + t.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void dismissPresentationProbe(String reason) {
+        if (presentationProbe != null) {
+            presentationProbe.dismiss(reason);
+            presentationProbe = null;
+        }
     }
 
     private void launchProjectionIntent() {
@@ -790,17 +968,23 @@ public class MainActivity extends Activity {
                 @Override public void onVirtualDisplayReady(int mode, int virtualDisplayId) {
                     AppLog.i("MainActivity", "controller ready: mode=" + mode + " vdId="
                             + virtualDisplayId);
-                    runOnUiThread(() -> setStatus(mode == CastController.MODE_MIRROR
-                            ? "兼容镜像捕获已启动，正在等待仪表第一帧…"
-                            : "直出虚拟屏已就绪: vd=" + virtualDisplayId + "（等待应用画面）"));
+                    runOnUiThread(() -> {
+                        String host = controller == null ? "UNKNOWN" : controller.getHostName();
+                        setStatus(mode == CastController.MODE_MIRROR
+                                ? "兼容镜像捕获已启动（" + host + "），正在等待仪表第一帧…"
+                                : "直出虚拟屏已就绪（" + host + "）: vd=" + virtualDisplayId);
+                    });
                 }
 
                 @Override public void onModeChanged(int mode, String reason) {
                     AppLog.i("MainActivity", "controller mode changed: mode=" + mode
                             + " reason=" + reason);
                     runOnUiThread(() -> {
+                        String host = controller == null ? "UNKNOWN" : controller.getHostName();
                         applyDefaultSliderLayout(mode);
-                        setStatus((mode == CastController.MODE_MIRROR ? "已切换兼容镜像模式：" : "直出模式：") + reason);
+                        setStatus(mode == CastController.MODE_MIRROR
+                                ? "已自动切到兼容镜像：中控会打开应用，仪表等待第一帧（" + host + "）"
+                                : "直出模式：" + reason);
                     });
                 }
 
@@ -808,13 +992,19 @@ public class MainActivity extends Activity {
                     AppLog.i("MainActivity", "app launch callback: pkg=" + packageName
                             + " success=" + success + " error=" + error);
                     runOnUiThread(() -> {
+                        String host = controller == null ? "UNKNOWN" : controller.getHostName();
                         if (!success) {
                             setStatus("启动失败: " + packageName + " / " + error);
+                        } else if (TestCastActivity.class.getName().equals(packageName)
+                                && controller != null
+                                && controller.getMode() == CastController.MODE_DIRECT) {
+                            setStatus("测试画面已进入投屏链路（" + host
+                                    + "），请看仪表盘；无画面请立即分享日志");
                         } else if (controller != null
                                 && controller.getMode() == CastController.MODE_MIRROR) {
-                            setStatus("镜像模式已切到前台: " + packageName + "，等待第一帧…");
+                            setStatus("兼容镜像：中控会打开应用，仪表盘等待第一帧（" + host + "）…");
                         } else {
-                            setStatus("直出启动请求已被系统接受: " + packageName
+                            setStatus("直出启动请求已被系统接受（" + host + "）：" + packageName
                                     + "；若仪表仍无画面，请分享日志判断是否被重定向");
                         }
                     });
@@ -822,7 +1012,10 @@ public class MainActivity extends Activity {
 
                 @Override public void onMirrorFirstFrame() {
                     AppLog.i("MainActivity", "mirror first frame shown on dashboard");
-                    runOnUiThread(() -> setStatus("镜像第一帧已输出到仪表盘"));
+                    runOnUiThread(() -> {
+                        String host = controller == null ? "UNKNOWN" : controller.getHostName();
+                        setStatus("真实捕获第一帧已输出到仪表盘（" + host + "）");
+                    });
                 }
 
                 @Override public void onError(String message, Throwable cause) {
@@ -836,6 +1029,8 @@ public class MainActivity extends Activity {
 
             controller.start(projection);
             projecting = true;
+            AppLog.i("MainActivity", "output host selected: " + controller.getHostName()
+                    + " detail=" + controller.getHostDetail());
             AppLog.i("MainActivity", "controller.start returned, projecting=true state="
                     + controller.getDiagnosticState());
             if (controlsContent != null) controlsContent.setVisibility(View.VISIBLE);
@@ -864,7 +1059,7 @@ public class MainActivity extends Activity {
             // 测试画面也可以作为第一次投屏入口，无需先点某个第三方 App。
             pendingPackage = null;
             startTestAfterProjection = true;
-            requestProjection();
+            startProjectionFlow();
             return;
         }
         boolean queued = controller.launchTestScreen(TestCastActivity.class);
@@ -904,11 +1099,11 @@ public class MainActivity extends Activity {
             seekW.setProgress(Math.round(mirrorWidth * 100f / targetDisplay.getWidth()));
             seekH.setProgress(100);
         } else {
-            // 直出默认对齐实车 960x266 居中区域。
-            seekX.setProgress(50);
-            seekY.setProgress(50);
-            seekW.setProgress(50);
-            seekH.setProgress(50);
+            // 诊断版先全屏输出，确认 ecarx 仪表物理合成层接受 Presentation 后再缩小。
+            seekX.setProgress(0);
+            seekY.setProgress(0);
+            seekW.setProgress(100);
+            seekH.setProgress(100);
         }
         applySliders();
     }
@@ -944,6 +1139,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         super.onDestroy();
+        dismissPresentationProbe("activity onDestroy");
         if (controller != null) {
             controller.stop();
             controller = null;

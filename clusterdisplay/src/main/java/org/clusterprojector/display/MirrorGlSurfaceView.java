@@ -97,6 +97,7 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
         private int viewportHeight;
         private boolean inputReady;
         private long frameAvailableCount;
+        private long consumedFrameCount;
         private long drawnFrameCount;
         private boolean firstFrameAvailableLogged;
         private boolean firstDrawnFrameLogged;
@@ -192,8 +193,16 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
                         + " texture=" + (surfaceTexture != null));
                 return;
             }
+            // GLSurfaceView 建立 EGL Surface 时可能自绘一次；此时还不是 MediaProjection 帧。
+            // 必须等到 SurfaceTexture 有真实输入并被 updateTexImage() 消费后，才能提示“第一帧已到仪表盘”。
+            if (frameAvailableCount <= consumedFrameCount) {
+                ClusterLog.i(TAG, "draw skipped while waiting for real captured frame: available="
+                        + frameAvailableCount + " consumed=" + consumedFrameCount);
+                return;
+            }
             try {
             surfaceTexture.updateTexImage();
+            consumedFrameCount++;
             surfaceTexture.getTransformMatrix(textureMatrix);
             android.opengl.Matrix.setIdentityM(vertexMatrix, 0);
             applyContainScale(vertexMatrix);
@@ -224,8 +233,9 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
             drawnFrameCount++;
             if (!firstDrawnFrameLogged) {
                 firstDrawnFrameLogged = true;
-                ClusterLog.i(TAG, "first frame rendered to dashboard surface: viewport="
-                        + viewportWidth + "x" + viewportHeight + " glError=0x"
+                ClusterLog.i(TAG, "first REAL captured frame rendered: viewport="
+                        + viewportWidth + "x" + viewportHeight + " sourceFrame="
+                        + consumedFrameCount + " glError=0x"
                         + Integer.toHexString(lastGlError));
                 if (callback != null) callback.onFirstFrame();
             }
@@ -256,7 +266,8 @@ public final class MirrorGlSurfaceView extends GLSurfaceView {
 
         void release() {
             ClusterLog.i(TAG, "release GL: inputReady=" + inputReady
-                    + " frameAvailable=" + frameAvailableCount + " drawn=" + drawnFrameCount);
+                    + " frameAvailable=" + frameAvailableCount
+                    + " consumed=" + consumedFrameCount + " drawn=" + drawnFrameCount);
             if (!inputReady) return;
             inputReady = false;
             mainHandler.post(() -> {

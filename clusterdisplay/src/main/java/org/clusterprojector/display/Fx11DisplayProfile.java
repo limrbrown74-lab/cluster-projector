@@ -28,8 +28,9 @@ public final class Fx11DisplayProfile {
     private Fx11DisplayProfile() {}
 
     public static WindowGeometry defaultDirectBounds() {
-        // 对齐实车日志中的 960x266，1920x532 居中 => x=480,y=133。
-        return WindowGeometry.centered(CLUSTER_WIDTH, CLUSTER_HEIGHT);
+        // v1.2.6 诊断版先全屏验证 Presentation 是否能进入仪表物理合成层；
+        // 确认可见后，用户仍可通过界面把窗口调小并移动到指定区域。
+        return new WindowGeometry(0, 0, CLUSTER_WIDTH, CLUSTER_HEIGHT);
     }
 
     public static WindowGeometry defaultMirrorBounds() {
