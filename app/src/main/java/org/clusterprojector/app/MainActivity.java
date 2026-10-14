@@ -28,6 +28,7 @@ import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.SeekBar;
 import android.widget.Spinner;
@@ -144,6 +145,7 @@ public class MainActivity extends Activity {
             testBtn = findViewById(R.id.testBtn);
             stopBtn = findViewById(R.id.stopBtn);
             Button logBtn = findViewById(R.id.logBtn);
+            arrangeLargeScreenActions(testBtn, stopBtn, logBtn);
 
             permissionButton.setOnClickListener(v -> onPermissionButtonClicked());
             testBtn.setOnClickListener(v -> onTestClicked());
@@ -169,7 +171,7 @@ public class MainActivity extends Activity {
             refreshPermissionStatus();
         } catch (Throwable t) {
             AppLog.e("MainActivity", "onCreate 初始化异常", t);
-            Toast.makeText(this, "初始化异常: " + t.getMessage(), Toast.LENGTH_LONG).show();
+            toast("初始化异常: " + t.getMessage(), Toast.LENGTH_LONG);
         }
     }
 
@@ -222,16 +224,17 @@ public class MainActivity extends Activity {
             sb.append("\n请点击“分享完整日志”，选择 LocalSend/微信等按文件发送；");
             sb.append("\n诊断包扩展名应为 .log，并会额外保存到 Download/clusterprojector/，");
             sb.append("\n方便在银河 NOS 分享面板受限时用 LocalSend 直接选择文件。");
-            new android.app.AlertDialog.Builder(this)
+            AlertDialog logDialog = new AlertDialog.Builder(this)
                     .setTitle("诊断日志")
                     .setMessage(sb)
                     .setPositiveButton("分享完整日志", (d, w) -> shareDiagnosticLog())
                     .setNeutralButton("文件管理器", (d, w) -> openLogFileManager())
                     .setNegativeButton("关闭", null)
                     .show();
+            styleAlertDialog(logDialog);
         } catch (Throwable t) {
             AppLog.e("MainActivity", "showLogs 异常", t);
-            Toast.makeText(this, "打开日志失败: " + t.getMessage(), Toast.LENGTH_LONG).show();
+            toast("打开日志失败: " + t.getMessage(), Toast.LENGTH_LONG);
         }
     }
 
@@ -244,12 +247,12 @@ public class MainActivity extends Activity {
             AppLog.i("MainActivity", "open log file manager requested");
         } catch (Throwable t) {
             AppLog.e("MainActivity", "打开文件管理器失败", t);
-            Toast.makeText(this, "当前系统没有可打开该目录的文件管理器", Toast.LENGTH_LONG).show();
+            toast("当前系统没有可打开该目录的文件管理器", Toast.LENGTH_LONG);
         }
     }
 
     private void shareDiagnosticLog() {
-        Toast.makeText(this, "正在整理完整诊断日志文件...", Toast.LENGTH_SHORT).show();
+        toast("正在整理完整诊断日志文件...", Toast.LENGTH_SHORT);
         AppLog.i("MainActivity", "export diagnostic bundle requested");
         String runtimeInfo = buildDiagnosticInfo();
         new Thread(() -> {
@@ -290,19 +293,119 @@ public class MainActivity extends Activity {
                         startActivity(chooser);
                         String savedHint = publicFile == null ? ""
                                 : "\n备用文件位置：Download/clusterprojector/" + publicFile.getName();
-                        Toast.makeText(this, "请选择 LocalSend/微信等发送文件，文件名："
-                                + file.getName() + savedHint, Toast.LENGTH_LONG).show();
+                        toast("请选择 LocalSend/微信等发送文件，文件名："
+                                + file.getName() + savedHint, Toast.LENGTH_LONG);
                     } catch (Throwable t) {
                         AppLog.e("MainActivity", "调起系统分享失败", t);
-                        Toast.makeText(this, "无法调起分享：" + t.getMessage(), Toast.LENGTH_LONG).show();
+                        toast("无法调起分享：" + t.getMessage(), Toast.LENGTH_LONG);
                     }
                 });
             } catch (Throwable t) {
                 AppLog.e("MainActivity", "导出诊断日志失败", t);
-                runOnUiThread(() -> Toast.makeText(this,
-                        "导出诊断日志失败: " + t.getMessage(), Toast.LENGTH_LONG).show());
+                runOnUiThread(() -> toast("导出诊断日志失败: " + t.getMessage(), Toast.LENGTH_LONG));
             }
         }, "diagnostic-export").start();
+    }
+
+
+    /**
+     * FX11 中控宽度充足，把三个操作按钮合并到同一行，给应用列表保留更多垂直空间。
+     * 手机等窄屏仍使用 XML 中的纵向按钮布局。
+     */
+    private void arrangeLargeScreenActions(Button... buttons) {
+        if (!getResources().getBoolean(R.bool.car_horizontal_actions) || buttons.length == 0) return;
+        ViewGroup root = findViewById(R.id.rootContainer);
+        if (root == null) return;
+
+        int firstIndex = root.indexOfChild(buttons[0]);
+        if (firstIndex < 0) return;
+        for (Button button : buttons) {
+            root.removeView(button);
+        }
+
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        int buttonGap = getResources().getDimensionPixelSize(R.dimen.space_sm);
+        int buttonHeight = getResources().getDimensionPixelSize(R.dimen.touch_button_primary);
+        for (int i = 0; i < buttons.length; i++) {
+            LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(
+                    0, buttonHeight, 1f);
+            if (i > 0) bp.setMarginStart(buttonGap);
+            buttons[i].setLayoutParams(bp);
+            bar.addView(buttons[i]);
+        }
+
+        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        barParams.bottomMargin = getResources().getDimensionPixelSize(R.dimen.space_md);
+        root.addView(bar, firstIndex, barParams);
+    }
+
+    /** FX11 车机上使用更大的自定义 Toast，避免系统默认提示文字过小。 */
+    private void toast(CharSequence message, int duration) {
+        try {
+            android.widget.TextView tv = new android.widget.TextView(this);
+            tv.setText(message);
+            tv.setTextColor(0xFFFFFFFF);
+            tv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                    getResources().getDimension(R.dimen.text_toast));
+            tv.setLineSpacing(4f, 1.08f);
+            tv.setBackgroundResource(R.drawable.toast_bg);
+            int paddingH = getResources().getDimensionPixelSize(R.dimen.toast_padding_h);
+            int paddingV = getResources().getDimensionPixelSize(R.dimen.toast_padding_v);
+            tv.setPadding(paddingH, paddingV, paddingH, paddingV);
+            tv.setMaxWidth(getResources().getDisplayMetrics().widthPixels - paddingH * 4);
+
+            Toast toast = new Toast(this);
+            toast.setView(tv);
+            toast.setDuration(duration);
+            toast.setGravity(android.view.Gravity.BOTTOM | android.view.Gravity.CENTER_HORIZONTAL,
+                    0, getResources().getDimensionPixelSize(R.dimen.space_lg) * 2);
+            toast.show();
+        } catch (Throwable t) {
+            AppLog.w("MainActivity", "custom toast failed", t);
+            Toast.makeText(this, message, duration).show();
+        }
+    }
+
+    /** 放大应用内 AlertDialog 文字和按钮，保证 1440x1920 中控屏可读。 */
+    private void styleAlertDialog(AlertDialog dialog) {
+        if (dialog == null) return;
+        try {
+            styleDialogText(dialog.findViewById(android.R.id.title),
+                    R.dimen.text_dialog_title, 0xFFFFFFFF, true);
+            styleDialogText(dialog.findViewById(android.R.id.message),
+                    R.dimen.text_dialog_message, 0xFFE8ECF7, false);
+            int[] buttonIds = {
+                    android.R.id.button1, android.R.id.button2, android.R.id.button3
+            };
+            for (int id : buttonIds) {
+                TextView button = dialog.findViewById(id);
+                if (button != null) {
+                    styleDialogText(button, R.dimen.text_dialog_button,
+                            0xFF00D4FF, false);
+                    button.setMinHeight(getResources().getDimensionPixelSize(
+                            R.dimen.touch_button_secondary));
+                    button.setPadding(getResources().getDimensionPixelSize(R.dimen.space_md),
+                            getResources().getDimensionPixelSize(R.dimen.space_sm),
+                            getResources().getDimensionPixelSize(R.dimen.space_md),
+                            getResources().getDimensionPixelSize(R.dimen.space_sm));
+                }
+            }
+        } catch (Throwable t) {
+            AppLog.w("MainActivity", "style dialog failed", t);
+        }
+    }
+
+    private void styleDialogText(TextView view, int dimenRes, int color, boolean bold) {
+        if (view == null) return;
+        view.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                getResources().getDimension(dimenRes));
+        view.setTextColor(color);
+        view.setLineSpacing(4f, 1.12f);
+        if (bold) view.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
     }
 
     /** 发送前通过 ContentResolver 反向校验，确保外部应用拿到的是真实文件而不是空 Uri。 */
@@ -504,7 +607,8 @@ public class MainActivity extends Activity {
     private void pickTargetDisplay() {
         List<DisplayTarget> displays = displayEnumerator.listDisplays();
         ArrayAdapter<DisplayTarget> adapter = new ArrayAdapter<>(
-                this, android.R.layout.simple_spinner_dropdown_item, displays);
+                this, R.layout.spinner_item, displays);
+        adapter.setDropDownViewResource(R.layout.spinner_dropdown_item);
         displaySpinner.setAdapter(adapter);
 
         int preferred = -1;
@@ -663,7 +767,7 @@ public class MainActivity extends Activity {
             openApplicationDetails();
             return;
         }
-        Toast.makeText(this, "核心权限已就绪，可以选择测试画面或应用开始投屏", Toast.LENGTH_SHORT).show();
+        toast("核心权限已就绪，可以选择测试画面或应用开始投屏", Toast.LENGTH_SHORT);
     }
 
     private boolean isMiuiLikeRom() {
@@ -709,10 +813,10 @@ public class MainActivity extends Activity {
             intent.setData(Uri.parse("package:" + getPackageName()));
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(intent);
-            Toast.makeText(this, "请在应用详情中检查权限，尤其是“获取应用列表”", Toast.LENGTH_LONG).show();
+            toast("请在应用详情中检查权限，尤其是“获取应用列表”", Toast.LENGTH_LONG);
         } catch (Throwable t) {
             AppLog.e("MainActivity", "打开应用详情失败", t);
-            Toast.makeText(this, "无法打开应用详情：" + t.getMessage(), Toast.LENGTH_LONG).show();
+            toast("无法打开应用详情：" + t.getMessage(), Toast.LENGTH_LONG);
         }
     }
 
@@ -740,8 +844,8 @@ public class MainActivity extends Activity {
 
     private void ensureOverlayPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "请授予“显示在其他应用上层”权限，否则无法在仪表盘创建窗口",
-                    Toast.LENGTH_LONG).show();
+            toast("请授予“显示在其他应用上层”权限，否则无法在仪表盘创建窗口",
+                    Toast.LENGTH_LONG);
             startActivityForResult(new Intent(
                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:" + getPackageName())), REQ_OVERLAY);
@@ -761,8 +865,8 @@ public class MainActivity extends Activity {
         targetDisplayObj = displayEnumerator.resolveDisplay(targetDisplay);
         if (targetDisplay == null || targetDisplay.isDefault() || targetDisplayObj == null) {
             clearPendingProjectionAction();
-            Toast.makeText(this, "未选择可用的仪表 Display（FX11 应为 1920x532）",
-                    Toast.LENGTH_LONG).show();
+            toast("未选择可用的仪表 Display（FX11 应为 1920x532）",
+                    Toast.LENGTH_LONG);
             AppLog.e("MainActivity", "Display 不可见或不是仪表: " + targetDisplay);
             return;
         }
@@ -788,7 +892,7 @@ public class MainActivity extends Activity {
             presentationProbe.show();
             setStatus("请看仪表盘：正在显示全屏副屏预检画面");
 
-            new AlertDialog.Builder(this)
+            AlertDialog preflightDialog = new AlertDialog.Builder(this)
                     .setTitle("仪表盘预检")
                     .setMessage("请保持车辆安全停放，观察仪表盘是否出现全屏闪烁色块和“仪表副屏预检”文字。\n\n"
                             + "看到了：说明官方副屏窗口可用，再继续录屏授权；\n"
@@ -807,8 +911,8 @@ public class MainActivity extends Activity {
                         dismissPresentationProbe("user confirmed invisible");
                         clearPendingProjectionAction();
                         setStatus("预检失败：仪表盘没有显示标准 Presentation");
-                        Toast.makeText(this, "仪表盘未显示预检画面，已停止继续投屏，请分享完整日志",
-                                Toast.LENGTH_LONG).show();
+                        toast("仪表盘未显示预检画面，已停止继续投屏，请分享完整日志",
+                                Toast.LENGTH_LONG);
                         showLogs();
                     })
                     .setNeutralButton("取消", (dialog, which) -> {
@@ -818,13 +922,14 @@ public class MainActivity extends Activity {
                         setStatus("已取消仪表预检");
                     })
                     .show();
+            styleAlertDialog(preflightDialog);
         } catch (Throwable t) {
             presentationProbePassedDisplayId = Integer.MIN_VALUE;
             dismissPresentationProbe("preflight show failed");
             clearPendingProjectionAction();
             AppLog.e("MainActivity", "Presentation preflight failed", t);
             setStatus("仪表预检被系统拒绝：" + t.getMessage());
-            Toast.makeText(this, "仪表预检被系统拒绝：" + t.getMessage(), Toast.LENGTH_LONG).show();
+            toast("仪表预检被系统拒绝：" + t.getMessage(), Toast.LENGTH_LONG);
         }
     }
 
@@ -837,7 +942,7 @@ public class MainActivity extends Activity {
 
     private void launchProjectionIntent() {
         if (projectionManager == null) {
-            Toast.makeText(this, "MediaProjection 服务不可用", Toast.LENGTH_LONG).show();
+            toast("MediaProjection 服务不可用", Toast.LENGTH_LONG);
             return;
         }
         AppLog.i("MainActivity", "launch system MediaProjection consent");
@@ -848,20 +953,20 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
             // 从应用点击或测试按钮进来时，保留本次动作；授权返回后继续弹 MediaProjection。
             projectionAfterOverlay = true;
-            Toast.makeText(this, "请先授予悬浮窗权限，授权后会继续发起投屏", Toast.LENGTH_LONG).show();
+            toast("请先授予悬浮窗权限，授权后会继续发起投屏", Toast.LENGTH_LONG);
             ensureOverlayPermission();
             return;
         }
         if (targetDisplay == null || targetDisplay.isDefault()) {
             clearPendingProjectionAction();
-            Toast.makeText(this, "未选择仪表 Display（FX11 应为 1920x532）", Toast.LENGTH_LONG).show();
+            toast("未选择仪表 Display（FX11 应为 1920x532）", Toast.LENGTH_LONG);
             return;
         }
         targetDisplayObj = displayEnumerator.resolveDisplay(targetDisplay);
         if (targetDisplayObj == null) {
             clearPendingProjectionAction();
-            Toast.makeText(this, "当前进程看不到 Display " + targetDisplay.getDisplayId()
-                    + "，可能被车机多屏策略限制", Toast.LENGTH_LONG).show();
+            toast("当前进程看不到 Display " + targetDisplay.getDisplayId()
+                    + "，可能被车机多屏策略限制", Toast.LENGTH_LONG);
             AppLog.e("MainActivity", "Display 不可见: " + targetDisplay);
             return;
         }
@@ -921,7 +1026,7 @@ public class MainActivity extends Activity {
                 @Override public void onError(String message) {
                     runOnUiThread(() -> {
                         stopProjection("投屏服务失败: " + message);
-                        Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+                        toast(message, Toast.LENGTH_LONG);
                     });
                 }
 
@@ -942,7 +1047,7 @@ public class MainActivity extends Activity {
             }
         } catch (Throwable t) {
             AppLog.e("MainActivity", "startProjectionService 异常", t);
-            Toast.makeText(this, "启动服务异常: " + t.getMessage(), Toast.LENGTH_LONG).show();
+            toast("启动服务异常: " + t.getMessage(), Toast.LENGTH_LONG);
         }
     }
 
@@ -1022,7 +1127,7 @@ public class MainActivity extends Activity {
                     runOnUiThread(() -> {
                         AppLog.e("MainActivity", message, cause);
                         stopProjection(message);
-                        Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+                        toast(message, Toast.LENGTH_LONG);
                     });
                 }
             });
@@ -1050,7 +1155,7 @@ public class MainActivity extends Activity {
         } catch (Throwable t) {
             AppLog.e("MainActivity", "beginCasting 异常", t);
             stopProjection(t.getMessage());
-            Toast.makeText(this, "投屏失败: " + t.getMessage(), Toast.LENGTH_LONG).show();
+            toast("投屏失败: " + t.getMessage(), Toast.LENGTH_LONG);
         }
     }
 

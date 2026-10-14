@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 手机/小屏紧凑布局；FX11 1440x1920 车机由 values-sw600dp 单独放大。 -->
+    <dimen name="screen_padding">10dp</dimen>
+    <dimen name="card_padding">10dp</dimen>
+    <dimen name="card_radius">12dp</dimen>
+    <dimen name="space_xs">3dp</dimen>
+    <dimen name="space_sm">4dp</dimen>
+    <dimen name="space_md">6dp</dimen>
+    <dimen name="space_lg">8dp</dimen>
+
+    <dimen name="header_icon">36dp</dimen>
+    <dimen name="header_icon_gap">10dp</dimen>
+
+    <dimen name="touch_button_primary">42dp</dimen>
+    <dimen name="touch_button_secondary">36dp</dimen>
+    <dimen name="touch_spinner">36dp</dimen>
+    <dimen name="touch_checkbox">36dp</dimen>
+    <dimen name="touch_seekbar">30dp</dimen>
+    <dimen name="app_row_min_height">48dp</dimen>
+    <dimen name="app_icon">34dp</dimen>
+    <dimen name="app_icon_gap">10dp</dimen>
+
+    <dimen name="text_app_title">18sp</dimen>
+    <dimen name="text_subtitle">11sp</dimen>
+    <dimen name="text_section">13sp</dimen>
+    <dimen name="text_body">12sp</dimen>
+    <dimen name="text_caption">11sp</dimen>
+    <dimen name="text_button">13sp</dimen>
+    <dimen name="text_app_name">14sp</dimen>
+    <dimen name="text_app_package">11sp</dimen>
+    <dimen name="text_dialog_title">17sp</dimen>
+    <dimen name="text_dialog_message">15sp</dimen>
+    <dimen name="text_dialog_button">15sp</dimen>
+    <dimen name="text_toast">13sp</dimen>
+
+    <dimen name="dialog_padding">18dp</dimen>
+    <dimen name="toast_padding_h">16dp</dimen>
+    <dimen name="toast_padding_v">12dp</dimen>
+</resources>

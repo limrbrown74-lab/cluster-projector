@@ -4,16 +4,17 @@
     android:layout_height="wrap_content"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:paddingStart="10dp"
-    android:paddingEnd="10dp"
-    android:paddingTop="7dp"
-    android:paddingBottom="7dp">
+    android:minHeight="@dimen/app_row_min_height"
+    android:paddingStart="@dimen/card_padding"
+    android:paddingEnd="@dimen/card_padding"
+    android:paddingTop="@dimen/space_md"
+    android:paddingBottom="@dimen/space_md">
 
     <ImageView
         android:id="@+id/appIcon"
-        android:layout_width="32dp"
-        android:layout_height="32dp"
-        android:layout_marginEnd="10dp" />
+        android:layout_width="@dimen/app_icon"
+        android:layout_height="@dimen/app_icon"
+        android:layout_marginEnd="@dimen/app_icon_gap" />
 
     <LinearLayout
         android:layout_width="0dp"
@@ -23,22 +24,19 @@
 
         <TextView
             android:id="@+id/appName"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:singleLine="true"
-            android:ellipsize="end"
-            android:maxWidth="320dp"
             android:textColor="#FFFFFF"
-            android:textSize="13sp" />
+            android:textSize="@dimen/text_app_name"
+            android:lineSpacingExtra="2dp" />
 
         <TextView
             android:id="@+id/appPkg"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:singleLine="true"
-            android:ellipsize="end"
-            android:maxWidth="320dp"
+            android:layout_marginTop="2dp"
             android:textColor="#8B8FA3"
-            android:textSize="10sp" />
+            android:textSize="@dimen/text_app_package"
+            android:lineSpacingExtra="2dp" />
     </LinearLayout>
 </LinearLayout>

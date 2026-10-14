@@ -47,8 +47,8 @@ public final class DisplayTarget {
     public boolean isPrivate() { return (flags & Display.FLAG_PRIVATE) != 0; }
 
     @Override public String toString() {
-        return "Display " + displayId + " | " + name + " | "
-                + width + "x" + height + " | " + densityDpi + "dpi | "
-                + (defaultDisplay ? "default" : "score=" + score) + " | " + reason;
+        String role = reason == null ? "" : " · " + reason;
+        return "D" + displayId + " · " + width + "×" + height
+                + " · " + densityDpi + "dpi" + role;
     }
 }

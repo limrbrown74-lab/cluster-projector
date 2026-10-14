@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- FX11/博越 L 中控 1440x1920@160dpi 适配：按车机远距离阅读放大文字和触控区域。 -->
+    <dimen name="screen_padding">20dp</dimen>
+    <dimen name="card_padding">20dp</dimen>
+    <dimen name="card_radius">16dp</dimen>
+    <dimen name="space_xs">5dp</dimen>
+    <dimen name="space_sm">7dp</dimen>
+    <dimen name="space_md">10dp</dimen>
+    <dimen name="space_lg">14dp</dimen>
+
+    <dimen name="header_icon">52dp</dimen>
+    <dimen name="header_icon_gap">14dp</dimen>
+
+    <dimen name="touch_button_primary">64dp</dimen>
+    <dimen name="touch_button_secondary">58dp</dimen>
+    <dimen name="touch_spinner">64dp</dimen>
+    <dimen name="touch_checkbox">56dp</dimen>
+    <dimen name="touch_seekbar">56dp</dimen>
+    <dimen name="app_row_min_height">88dp</dimen>
+    <dimen name="app_icon">56dp</dimen>
+    <dimen name="app_icon_gap">14dp</dimen>
+
+    <dimen name="text_app_title">34sp</dimen>
+    <dimen name="text_subtitle">22sp</dimen>
+    <dimen name="text_section">24sp</dimen>
+    <dimen name="text_body">22sp</dimen>
+    <dimen name="text_caption">21sp</dimen>
+    <dimen name="text_button">22sp</dimen>
+    <dimen name="text_app_name">22sp</dimen>
+    <dimen name="text_app_package">19sp</dimen>
+    <dimen name="text_dialog_title">28sp</dimen>
+    <dimen name="text_dialog_message">24sp</dimen>
+    <dimen name="text_dialog_button">22sp</dimen>
+    <dimen name="text_toast">22sp</dimen>
+
+    <dimen name="dialog_padding">26dp</dimen>
+    <dimen name="toast_padding_h">24dp</dimen>
+    <dimen name="toast_padding_v">16dp</dimen>
+</resources>

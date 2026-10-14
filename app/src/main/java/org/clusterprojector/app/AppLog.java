@@ -76,6 +76,7 @@ public final class AppLog {
     public static void d(String tag, String msg) { write("D", tag, msg, null); }
     public static void i(String tag, String msg) { write("I", tag, msg, null); }
     public static void w(String tag, String msg) { write("W", tag, msg, null); }
+    public static void w(String tag, String msg, Throwable t) { write("W", tag, msg, t); }
     public static void e(String tag, String msg) { write("E", tag, msg, null); }
     public static void e(String tag, String msg, Throwable t) { write("E", tag, msg, t); }
 
