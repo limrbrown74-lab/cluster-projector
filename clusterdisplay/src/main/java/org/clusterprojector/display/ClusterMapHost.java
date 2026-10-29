@@ -4,7 +4,6 @@ import android.app.Presentation;
 import android.content.Context;
 import android.os.Bundle;
 import android.util.DisplayMetrics;
-import android.util.Log;
 import android.view.Display;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -46,15 +45,15 @@ public final class ClusterMapHost {
     /** 启动仪表地图直通。 */
     public synchronized void start() {
         if (presentation != null) {
-            Log.w(TAG, "already started");
+            ClusterLog.w(TAG, "already started");
             return;
         }
         try {
             presentation = new MapPresentation(ownerContext, clusterDisplay);
             presentation.show();
-            Log.i(TAG, "MapPresentation shown on display=" + clusterDisplay.getDisplayId());
+            ClusterLog.i(TAG, "MapPresentation shown on display=" + clusterDisplay.getDisplayId());
         } catch (Exception e) {
-            Log.e(TAG, "start failed", e);
+            ClusterLog.e(TAG, "start failed", e);
         }
     }
 
@@ -90,7 +89,7 @@ public final class ClusterMapHost {
 
     private void onSurfaceReady(SurfaceHolder holder) {
         surfaceReady = true;
-        Log.i(TAG, "Surface ready: " + holder.getSurface());
+        ClusterLog.i(TAG, "Surface ready: " + holder.getSurface());
 
         // 第一步：让原厂地图渲染到这个 Surface
         attachMap();
@@ -107,7 +106,7 @@ public final class ClusterMapHost {
     private void attachMap() {
         if (surfaceView == null || !surfaceReady) return;
         if (!avmClient.isNaviReady()) {
-            Log.w(TAG, "Navi not ready, skip attachMap");
+            ClusterLog.w(TAG, "Navi not ready, skip attachMap");
             return;
         }
         DisplayMetrics metrics = new DisplayMetrics();
@@ -115,13 +114,13 @@ public final class ClusterMapHost {
         boolean ok = avmClient.naviAddSurface(surfaceView.getHolder().getSurface(),
                 0, metrics.widthPixels, metrics.heightPixels);
         mapAttached = ok;
-        Log.i(TAG, "attachMap ok=" + ok + " size=" + metrics.widthPixels + "x" + metrics.heightPixels);
+        ClusterLog.i(TAG, "attachMap ok=" + ok + " size=" + metrics.widthPixels + "x" + metrics.heightPixels);
     }
 
     private void submitSurface() {
         if (surfaceView == null || !surfaceReady) return;
         if (!avmClient.isParkingReady()) {
-            Log.w(TAG, "Parking not ready, skip submitSurface");
+            ClusterLog.w(TAG, "Parking not ready, skip submitSurface");
             return;
         }
         // 先打开 AVM 模式，让 QNX 停止渲染原厂仪表
@@ -129,7 +128,7 @@ public final class ClusterMapHost {
         // 把 Surface 投到仪表屏
         boolean ok = avmClient.avmSetDisplaySurface(surfaceView.getHolder().getSurface());
         surfaceSubmitted = ok;
-        Log.i(TAG, "submitSurface ok=" + ok);
+        ClusterLog.i(TAG, "submitSurface ok=" + ok);
     }
 
     private void detachSurface() {
@@ -162,18 +161,18 @@ public final class ClusterMapHost {
             surfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {
                 @Override
                 public void surfaceCreated(SurfaceHolder holder) {
-                    Log.i(TAG, "surfaceCreated");
+                    ClusterLog.i(TAG, "surfaceCreated");
                     onSurfaceReady(holder);
                 }
 
                 @Override
                 public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-                    Log.i(TAG, "surfaceChanged " + width + "x" + height);
+                    ClusterLog.i(TAG, "surfaceChanged " + width + "x" + height);
                 }
 
                 @Override
                 public void surfaceDestroyed(SurfaceHolder holder) {
-                    Log.i(TAG, "surfaceDestroyed");
+                    ClusterLog.i(TAG, "surfaceDestroyed");
                     onSurfaceDestroyed();
                 }
             });

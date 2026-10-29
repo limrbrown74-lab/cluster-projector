@@ -233,6 +233,19 @@
                 android:visibility="gone">
 
                 <TextView
+                    android:id="@+id/mergeHint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="@dimen/space_sm"
+                    android:background="#1A00D4FF"
+                    android:padding="@dimen/space_sm"
+                    android:lineSpacingExtra="1dp"
+                    android:text="合并投屏中：画面铺满仪表盘，位置/大小锁定，仅透明度可调"
+                    android:textColor="#00D4FF"
+                    android:textSize="@dimen/text_caption"
+                    android:visibility="gone" />
+
+                <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="水平位置 X"

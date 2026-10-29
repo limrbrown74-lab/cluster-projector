@@ -63,6 +63,7 @@ public final class OverlayWindowHost {
     /** 合并投屏：应用画面（镜像）之上叠加透明自绘仪表层。 */
     private boolean mergeDashboard;
     private boolean mergeApplied;
+    private boolean mergeBoundsNotified;
     private ClusterDashboardView dashboardOverlay;
 
     private final SurfaceHolder.Callback directHolderCallback = new SurfaceHolder.Callback() {
@@ -239,6 +240,7 @@ public final class OverlayWindowHost {
                 container.setLayoutParams(lp);
             }
             mergeApplied = false;
+            mergeBoundsNotified = false;
         } catch (Throwable t) {
             ClusterLog.w(TAG, "merge layout revert failed", t);
         }
@@ -422,7 +424,10 @@ public final class OverlayWindowHost {
             return;
         }
         if (mergeApplied) {
-            ClusterLog.i(TAG, "setBounds ignored during merge layout (window is fullscreen)");
+            if (!mergeBoundsNotified) {
+                mergeBoundsNotified = true;
+                ClusterLog.i(TAG, "setBounds ignored during merge layout (window is fullscreen)");
+            }
             return;
         }
         initialBounds = bounds;

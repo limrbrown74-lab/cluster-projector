@@ -5,7 +5,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.IBinder;
-import android.util.Log;
 
 import java.lang.reflect.Method;
 
@@ -48,7 +47,7 @@ public final class AvmServiceClient {
     private final ServiceConnection connection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
-            Log.i(TAG, "OneOSApiService connected");
+            ClusterLog.i(TAG, "OneOSApiService connected");
             serviceManagerBinder = service;
             resolveManagers();
             if (callback != null) callback.onConnected();
@@ -56,7 +55,7 @@ public final class AvmServiceClient {
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
-            Log.w(TAG, "OneOSApiService disconnected");
+            ClusterLog.w(TAG, "OneOSApiService disconnected");
             serviceManagerBinder = null;
             naviServer = null;
             parkingServer = null;
@@ -91,9 +90,9 @@ public final class AvmServiceClient {
             Intent intent = new Intent();
             intent.setClassName(PKG, CLS);
             binding = appContext.bindService(intent, connection, Context.BIND_AUTO_CREATE);
-            Log.i(TAG, "bindService result=" + binding);
+            ClusterLog.i(TAG, "bindService result=" + binding);
         } catch (Exception e) {
-            Log.e(TAG, "bindService failed", e);
+            ClusterLog.e(TAG, "bindService failed", e);
         }
     }
 
@@ -120,15 +119,15 @@ public final class AvmServiceClient {
             Class<?> stubCls = Class.forName("com.geely.lib.oneosapi.IServiceManager$Stub");
             Method asInterface = stubCls.getMethod("asInterface", IBinder.class);
             Object serviceMgr = asInterface.invoke(null, serviceManagerBinder);
-            Log.i(TAG, "IServiceManager resolved: " + (serviceMgr != null));
+            ClusterLog.i(TAG, "IServiceManager resolved: " + (serviceMgr != null));
 
             // getService(TYPE_NAVI) → IBinder
             Method getService = serviceMgr.getClass().getMethod("getService", int.class);
             IBinder naviBinder = (IBinder) getService.invoke(serviceMgr, TYPE_NAVI);
-            Log.i(TAG, "Navi binder: " + naviBinder);
+            ClusterLog.i(TAG, "Navi binder: " + naviBinder);
 
             IBinder parkingBinder = (IBinder) getService.invoke(serviceMgr, TYPE_PARKING);
-            Log.i(TAG, "Parking binder: " + parkingBinder);
+            ClusterLog.i(TAG, "Parking binder: " + parkingBinder);
 
             // INaviServer.Stub.asInterface(naviBinder)
             if (naviBinder != null) {
@@ -136,9 +135,9 @@ public final class AvmServiceClient {
                     Class<?> naviStub = Class.forName("com.geely.lib.oneosapi.navi.INaviServer$Stub");
                     Method naviAsInterface = naviStub.getMethod("asInterface", IBinder.class);
                     naviServer = naviAsInterface.invoke(null, naviBinder);
-                    Log.i(TAG, "NaviServer resolved: " + (naviServer != null));
+                    ClusterLog.i(TAG, "NaviServer resolved: " + (naviServer != null));
                 } catch (ClassNotFoundException e) {
-                    Log.w(TAG, "INaviServer$Stub not found, use raw binder", e);
+                    ClusterLog.w(TAG, "INaviServer$Stub not found, use raw binder", e);
                     naviServer = naviBinder;
                 }
             }
@@ -149,14 +148,14 @@ public final class AvmServiceClient {
                     Class<?> parkingStub = Class.forName("com.geely.lib.oneosapi.parking.IParkingService$Stub");
                     Method parkingAsInterface = parkingStub.getMethod("asInterface", IBinder.class);
                     parkingServer = parkingAsInterface.invoke(null, parkingBinder);
-                    Log.i(TAG, "ParkingServer resolved: " + (parkingServer != null));
+                    ClusterLog.i(TAG, "ParkingServer resolved: " + (parkingServer != null));
                 } catch (ClassNotFoundException e) {
-                    Log.w(TAG, "IParkingService$Stub not found, use raw binder", e);
+                    ClusterLog.w(TAG, "IParkingService$Stub not found, use raw binder", e);
                     parkingServer = parkingBinder;
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "resolveManagers failed", e);
+            ClusterLog.e(TAG, "resolveManagers failed", e);
         }
     }
 
@@ -175,22 +174,22 @@ public final class AvmServiceClient {
      */
     public boolean naviAddSurface(android.view.Surface surface, int type, int width, int height) {
         if (naviServer == null) {
-            Log.w(TAG, "naviAddSurface: naviServer null");
+            ClusterLog.w(TAG, "naviAddSurface: naviServer null");
             return false;
         }
         try {
             Method m = findMethod(naviServer.getClass(), "addSurface",
                     android.view.Surface.class, int.class, int.class, int.class);
             if (m == null) {
-                Log.w(TAG, "addSurface method not found");
+                ClusterLog.w(TAG, "addSurface method not found");
                 return false;
             }
             Object result = m.invoke(naviServer, surface, type, height, width);
             boolean ok = result instanceof Boolean && (Boolean) result;
-            Log.i(TAG, "naviAddSurface result=" + ok);
+            ClusterLog.i(TAG, "naviAddSurface result=" + ok);
             return ok;
         } catch (Exception e) {
-            Log.e(TAG, "naviAddSurface failed", e);
+            ClusterLog.e(TAG, "naviAddSurface failed", e);
             return false;
         }
     }
@@ -205,7 +204,7 @@ public final class AvmServiceClient {
             Object result = m.invoke(naviServer, surface, type);
             return result instanceof Boolean && (Boolean) result;
         } catch (Exception e) {
-            Log.e(TAG, "naviRemoveSurface failed", e);
+            ClusterLog.e(TAG, "naviRemoveSurface failed", e);
             return false;
         }
     }
@@ -218,22 +217,22 @@ public final class AvmServiceClient {
      */
     public boolean avmSetDisplaySurface(android.view.Surface surface) {
         if (parkingServer == null) {
-            Log.w(TAG, "avmSetDisplaySurface: parkingServer null");
+            ClusterLog.w(TAG, "avmSetDisplaySurface: parkingServer null");
             return false;
         }
         try {
             Method m = findMethod(parkingServer.getClass(), "avmSetDisplaySurface",
                     android.view.Surface.class);
             if (m == null) {
-                Log.w(TAG, "avmSetDisplaySurface method not found");
+                ClusterLog.w(TAG, "avmSetDisplaySurface method not found");
                 return false;
             }
             Object result = m.invoke(parkingServer, surface);
             boolean ok = result instanceof Boolean && (Boolean) result;
-            Log.i(TAG, "avmSetDisplaySurface result=" + ok);
+            ClusterLog.i(TAG, "avmSetDisplaySurface result=" + ok);
             return ok;
         } catch (Exception e) {
-            Log.e(TAG, "avmSetDisplaySurface failed", e);
+            ClusterLog.e(TAG, "avmSetDisplaySurface failed", e);
             return false;
         }
     }
@@ -261,7 +260,7 @@ public final class AvmServiceClient {
             Object result = m.invoke(parkingServer);
             return result instanceof Boolean && (Boolean) result;
         } catch (Exception e) {
-            Log.e(TAG, methodName + " failed", e);
+            ClusterLog.e(TAG, methodName + " failed", e);
             return false;
         }
     }

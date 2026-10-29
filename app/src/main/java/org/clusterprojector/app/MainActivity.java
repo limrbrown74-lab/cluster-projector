@@ -69,6 +69,7 @@ public class MainActivity extends Activity {
     private Spinner displaySpinner;
     private View controlsContent;
     private SeekBar seekX, seekY, seekW, seekH, seekAlpha;
+    private android.widget.TextView mergeHint;
     private Button testBtn, stopBtn, permissionButton;
 
     // 投屏方式切换（首页只显示当前方式，设置页可切换）
@@ -198,6 +199,7 @@ public class MainActivity extends Activity {
             seekW = findViewById(R.id.seekW);
             seekH = findViewById(R.id.seekH);
             seekAlpha = findViewById(R.id.seekAlpha);
+            mergeHint = findViewById(R.id.mergeHint);
             testBtn = findViewById(R.id.testBtn);
             stopBtn = findViewById(R.id.stopBtn);
             Button logBtn = findViewById(R.id.logBtn);
@@ -247,7 +249,14 @@ public class MainActivity extends Activity {
 
             SeekBar.OnSeekBarChangeListener sliderListener = new SeekBar.OnSeekBarChangeListener() {
                 @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                    if (fromUser) applySliders();
+                    if (fromUser) {
+                        if (isMergeActive()) {
+                            // 合并模式位置/大小锁定：忽略，滑块状态由 updateMergeSliderState 维护
+                            updateMergeSliderState();
+                            return;
+                        }
+                        applySliders();
+                    }
                 }
                 @Override public void onStartTrackingTouch(SeekBar seekBar) {}
                 @Override public void onStopTrackingTouch(SeekBar seekBar) {}
@@ -793,7 +802,17 @@ public class MainActivity extends Activity {
     // v1.5.0: ECARX/VHAL 物理切屏
     // ------------------------------------------------------------------
 
+    /** 切屏自测按钮防抖间隔（毫秒）。 */
+    private static final long SWITCH_DEBOUNCE_MS = 1500L;
+    private long lastSwitchClickMs;
+
     private void onSwitchClicked() {
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - lastSwitchClickMs < SWITCH_DEBOUNCE_MS) {
+            AppLog.i("MainActivity", "manual switch debounced (click too fast)");
+            return;
+        }
+        lastSwitchClickMs = now;
         if (controller != null && controller.isSwitchActive()) {
             // 已在切屏状态：恢复原厂
             AppLog.i("MainActivity", "manual switch: restore stock");
@@ -1446,6 +1465,7 @@ public class MainActivity extends Activity {
             if (controlsContent != null) controlsContent.setVisibility(View.VISIBLE);
             displaySpinner.setEnabled(false);
             applyDefaultSliderLayout(controller.getMode());
+            updateMergeSliderState();
             if (pendingPackage != null) {
                 String pkg = pendingPackage;
                 pendingPackage = null;
@@ -1499,6 +1519,7 @@ public class MainActivity extends Activity {
         }
         setStatus(reason == null ? "已停止" : reason);
         refreshPermissionStatus();
+        updateMergeSliderState();
     }
 
     private void applyDefaultSliderLayout(int mode) {
@@ -1531,6 +1552,29 @@ public class MainActivity extends Activity {
             seekH.setProgress(100);
         }
         applySliders();
+    }
+
+    /** 合并投屏是否生效：应用投屏（镜像）运行中 + 设置开启了叠加透明仪表。 */
+    private boolean isMergeActive() {
+        return controller != null && controller.isRunning()
+                && controller.getMode() == CastController.MODE_MIRROR
+                && org.clusterprojector.display.DashboardConfig.isMergeEnabled();
+    }
+
+    /** 合并模式锁定位置/大小滑块（透明度仍可调），并显示提示。 */
+    private void updateMergeSliderState() {
+        if (seekX == null || mergeHint == null) return;
+        boolean merge = isMergeActive();
+        seekX.setEnabled(!merge);
+        seekY.setEnabled(!merge);
+        seekW.setEnabled(!merge);
+        seekH.setEnabled(!merge);
+        mergeHint.setVisibility(merge ? View.VISIBLE : View.GONE);
+        if (!merge) {
+            // 退出合并后恢复滑块为默认布局，避免沿用锁定时残留的值
+            applyDefaultSliderLayout(controller != null
+                    ? controller.getMode() : CastController.MODE_MIRROR);
+        }
     }
 
     private void applySliders() {
@@ -1570,6 +1614,29 @@ public class MainActivity extends Activity {
         }
         if (stopBtn != null) {
             stopBtn.setVisibility(appCast ? View.VISIBLE : View.GONE);
+        }
+        // 方式切换互斥：停掉不属于当前方式的投屏，避免仪表残留切屏/叠加
+        if (!appCast && controller != null && controller.isRunning()) {
+            AppLog.i("MainActivity", "cast mode switch: stop app projection");
+            stopProjection("切换投屏方式");
+        }
+        if (!dashboard && dashboardHost != null && dashboardHost.isRunning()) {
+            AppLog.i("MainActivity", "cast mode switch: stop dashboard projection");
+            dashboardHost.stop();
+            dashboardHost = null;
+            if (dashboardScreenBtn != null) {
+                dashboardScreenBtn.setText("仪表盘投物理屏");
+                dashboardScreenBtn.setTextColor(0xFF00D4FF);
+            }
+        }
+        if (!avmMap && clusterMapHost != null && clusterMapHost.isRunning()) {
+            AppLog.i("MainActivity", "cast mode switch: stop AVM map passthrough");
+            clusterMapHost.stop();
+            clusterMapHost = null;
+            if (avmStatusText != null) {
+                avmStatusText.setText("已停止");
+                avmStatusText.setTextColor(0xFFFFC857);
+            }
         }
         AppLog.i("MainActivity", "home mode -> " + currentModeTitle.getText()
                 + " (mode=" + mode + " appCast=" + appCast
