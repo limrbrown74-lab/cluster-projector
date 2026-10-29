@@ -120,9 +120,26 @@
 
 ## ⚠️ QNX / 车机系统高风险警告
 
+### 本项目代码实际做了什么
+
+本项目**不修改 QNX 侧的任何代码、分区或配置**，只通过车机 Android 系统**厂商已提供的接口**切换仪表显示源：
+
+| 模块 | 调用的系统能力 | 作用 |
+|---|---|---|
+| `ClusterProjectionSwitch` | ECARX XUI AdaptAPI：`isFunctionSupported(0x20320500)` / `setFunctionValue(0x20320500)` | 把仪表显示源从 QNX 原厂画面切到 Android（主路径） |
+| `ClusterProjectionSwitch` | VHAL HIDL V2_0：`set 0x21408636 = 3`，回读 `0x21708B0F` | 兜底路径：叠加/切屏模式 |
+| `AvmServiceClient` / `ClusterMapHost` | 厂商 OneOS API（`OneOSApiService`）：`avmSetDisplaySurface` / `naviAddSurface` | 仪表地图（AVM）官方通道 |
+| `ClusterApp` | 进程启动时自动检测 | 若投屏状态残留，自动恢复原厂仪表 |
+
+恢复原厂 = `setFunctionValue(0x20320500, 0)` 或 VHAL `set 0`，**全程不写 QNX 分区、不刷机、不绕过系统签名**。
+
+### 风险边界（务必阅读）
+
 - **QNX 侧代码、系统分区不可随意修改**：QNX 是仪表盘安全关键系统，承载仪表、报警、辅助驾驶等安全信息；
 - 不当修改可能导致**仪表黑屏、车机无法启动、安全功能失效，甚至需要更换车机硬件**；
-- 本项目通过厂商已有的 Android 侧接口（ECARX AdaptAPI / VHAL）切换显示源，**不修改 QNX、不刷机、不绕过签名**；
+- 切换显示源属于对车机系统服务的深度调用，**实车验证前请完整阅读文末[免责声明](#免责声明)**；
+- 若切屏后未正确恢复（App 被强杀、系统服务异常等），仪表可能停留在非原厂画面，**请使用 App 内"手动切屏/恢复原厂"或重启车机恢复**；
+- 本项目**不提供、不建议**任何修改 QNX、刷机、绕过系统签名、获取 HAB 密钥或底层调试通道的操作；
 - 任何 QNX 级开发都必须在具备厂商授权、完整工具链和救砖方案的条件下进行，否则后果自负。
 
 ---
@@ -136,8 +153,8 @@
 | Android | 11，`RQ3A.211001.001` |
 | 平台 | 亿咖通 ecarx |
 | 中控屏 | Display 0，`1440×1920@160dpi` |
-| 首选仪表屏 | Display 3，`1920×532@320dpi` |
-| 备选仪表屏 | Display 4，`1920×532@320dpi` |
+| 首选仪表屏 | Display 4，`1920×532@320dpi` |
+| 备选仪表屏 | Display 3，`1920×532@320dpi` |
 
 ---
 

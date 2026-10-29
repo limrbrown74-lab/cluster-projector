@@ -8,14 +8,14 @@ package org.clusterprojector.display;
  *     <li>Display 0：中控竖屏 1440x1920@160</li>
  *     <li>Display 1：内置小屏 800x480@320，需要排除</li>
  *     <li>Display 2：副驾/娱乐屏 2880x1080@160，需要排除</li>
- *     <li>Display 3/4：仪表长条屏 1920x532@320，优先 Display 3</li>
+ *     <li>Display 3/4：仪表长条屏 1920x532@320，实车确认优先 Display 4（备选 3）</li>
  * </ul>
  */
 public final class Fx11DisplayProfile {
 
     public static final int CENTER_DISPLAY_ID = 0;
-    public static final int PREFERRED_CLUSTER_DISPLAY_ID = 3;
-    public static final int SECONDARY_CLUSTER_DISPLAY_ID = 4;
+    public static final int PREFERRED_CLUSTER_DISPLAY_ID = 4;
+    public static final int SECONDARY_CLUSTER_DISPLAY_ID = 3;
 
     public static final int CLUSTER_WIDTH = 1920;
     public static final int CLUSTER_HEIGHT = 532;
@@ -82,8 +82,13 @@ public final class Fx11DisplayProfile {
             return "FX11 中控屏，不作为仪表目标";
         }
         if (isClusterSize(width, height)) {
-            return displayId == PREFERRED_CLUSTER_DISPLAY_ID
-                    ? "FX11 首选仪表长条屏" : "FX11 仪表长条屏";
+            if (displayId == PREFERRED_CLUSTER_DISPLAY_ID) {
+                return "FX11 首选仪表长条屏 (Display 4)";
+            }
+            if (displayId == SECONDARY_CLUSTER_DISPLAY_ID) {
+                return "FX11 备选仪表长条屏 (Display 3)";
+            }
+            return "FX11 仪表长条屏";
         }
         if (width == 800 && height == 480) return "FX11 内置小屏/HUD，已降权";
         if (width == 2880 && height == 1080) return "FX11 副驾/娱乐屏，已降权";
