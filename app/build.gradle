@@ -1,5 +1,11 @@
 apply plugin: "com.android.application"
 
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace "org.clusterprojector.app"
     compileSdk 34
@@ -10,8 +16,26 @@ android {
         // FX11 为 Android 11 / ecarx 定制系统，云盘等车机预装应用也停留在 targetSdk 28。
         // 使用 28 可避免新版本兼容策略影响后台启动、外部存储日志和车机多 Display 行为。
         targetSdk 28
-        versionCode 12
-        versionName "1.2.9-fx11-ui-readability"
+        versionCode 15
+        versionName "1.4.1-fx11-overlay-mirror"
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                storeFile rootProject.file(keystoreProperties["storeFile"])
+                storePassword keystoreProperties["storePassword"]
+                keyAlias keystoreProperties["keyAlias"]
+                keyPassword keystoreProperties["keyPassword"]
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
     }
 
     compileOptions {

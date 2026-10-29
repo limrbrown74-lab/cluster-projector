@@ -10,3 +10,5 @@ local.properties
 # Local exported APK/AAR artifacts; binaries are attached to GitHub releases, not committed.
 dist/
 release/
+signing/
+keystore.properties

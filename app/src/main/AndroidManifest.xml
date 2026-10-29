@@ -55,6 +55,28 @@
             android:screenOrientation="landscape"
             android:theme="@style/AppTheme" />
 
+        <!-- 特斯拉风格数字仪表盘 -->
+        <activity
+            android:name=".DashboardActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/AppTheme" />
+
+        <!-- 设置页：投屏方式切换 / 打赏 / 关于 / 免责声明 / 开源许可 -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/AppTheme" />
+
+        <!-- 仪表管理：元素显示 / 位置 / 叠加开关 -->
+        <activity
+            android:name=".DashboardManageActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/AppTheme" />
+
         <service
             android:name=".CastAccessibilityService"
             android:exported="true"

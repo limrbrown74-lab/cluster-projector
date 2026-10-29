@@ -1,11 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/rootContainer"
+<org.clusterprojector.app.ClusterScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootScroll"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#0F1117"
-    android:orientation="vertical"
-    android:padding="@dimen/screen_padding">
+    android:fillViewport="false">
+
+    <LinearLayout
+        android:id="@+id/rootContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="@dimen/screen_padding">
 
     <!-- Header -->
     <LinearLayout
@@ -39,9 +45,18 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="选择应用投到仪表盘"
+                android:text="把内容投到仪表盘"
                 android:textColor="#8B8FA3"
                 android:textSize="@dimen/text_subtitle" />
+
+            <TextView
+                android:id="@+id/versionText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="版本"
+                android:textColor="#6F758A"
+                android:textSize="@dimen/text_caption" />
         </LinearLayout>
 
         <TextView
@@ -58,12 +73,14 @@
             android:lineSpacingExtra="2dp" />
     </LinearLayout>
 
-    <!-- Permission status -->
+    <!-- 权限检查（默认折叠，点击展开） -->
     <LinearLayout
         android:id="@+id/permissionCard"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
+        android:clickable="true"
+        android:focusable="true"
         android:background="@drawable/card_bg"
         android:padding="@dimen/card_padding"
         android:layout_marginBottom="@dimen/space_md">
@@ -78,7 +95,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="权限检查"
+                android:text="权限检查（点击展开）"
                 android:textColor="#B8BDD2"
                 android:textSize="@dimen/text_section"
                 android:textStyle="bold" />
@@ -97,162 +114,412 @@
                 android:lineSpacingExtra="2dp" />
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/permissionStatusText"
+        <LinearLayout
+            android:id="@+id/permissionDetails"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_sm"
-            android:lineSpacingExtra="2dp"
-            android:text="正在检查权限..."
-            android:textColor="#FFFFFF"
-            android:textSize="@dimen/text_body" />
+            android:orientation="vertical"
+            android:visibility="gone">
 
-        <Button
-            android:id="@+id/permissionButton"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/touch_button_secondary"
-            android:layout_marginTop="@dimen/space_md"
-            android:background="@drawable/btn_secondary"
-            android:minHeight="@dimen/touch_button_secondary"
-            android:paddingStart="@dimen/card_padding"
-            android:paddingEnd="@dimen/card_padding"
-            android:textAllCaps="false"
-            android:text="重新检查权限"
-            android:textColor="#00D4FF"
-            android:textSize="@dimen/text_button" />
+            <TextView
+                android:id="@+id/permissionStatusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_sm"
+                android:lineSpacingExtra="2dp"
+                android:text="正在检查权限..."
+                android:textColor="#FFFFFF"
+                android:textSize="@dimen/text_body" />
+
+            <Button
+                android:id="@+id/permissionButton"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/touch_button_secondary"
+                android:layout_marginTop="@dimen/space_md"
+                android:background="@drawable/btn_secondary"
+                android:minHeight="@dimen/touch_button_secondary"
+                android:paddingStart="@dimen/card_padding"
+                android:paddingEnd="@dimen/card_padding"
+                android:textAllCaps="false"
+                android:text="重新检查权限"
+                android:textColor="#00D4FF"
+                android:textSize="@dimen/text_button" />
+        </LinearLayout>
     </LinearLayout>
 
-    <!-- Display Selector Card -->
+    <!-- 当前投屏方式 + 更多入口 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
         android:background="@drawable/card_bg"
         android:padding="@dimen/card_padding"
         android:layout_marginBottom="@dimen/space_md">
 
         <TextView
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:text="目标显示设备"
+            android:layout_weight="1"
+            android:text="当前投屏方式"
             android:textColor="#B8BDD2"
             android:textSize="@dimen/text_section"
-            android:layout_marginBottom="@dimen/space_sm" />
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/currentModeTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/space_md"
+            android:text="应用投屏"
+            android:textColor="#4CD964"
+            android:textSize="@dimen/text_body"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/moreModesBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/touch_button_secondary"
+            android:layout_marginStart="@dimen/space_md"
+            android:minHeight="@dimen/touch_button_secondary"
+            android:text="更多投屏方式 ›"
+            android:textSize="@dimen/text_button"
+            android:textColor="#00D4FF"
+            android:textAllCaps="false"
+            android:background="@drawable/btn_secondary" />
+    </LinearLayout>
+
+    <!-- ============ 方式一容器：应用投屏 ============ -->
+    <LinearLayout
+        android:id="@+id/modeAppCastContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="visible">
 
         <Spinner
             android:id="@+id/displaySpinner"
             android:layout_width="match_parent"
             android:layout_height="@dimen/touch_spinner"
-            android:minHeight="@dimen/touch_spinner" />
-    </LinearLayout>
-
-    <!-- Control Panel Card -->
-    <LinearLayout
-        android:id="@+id/controlCard"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:clickable="true"
-        android:focusable="true"
-        android:background="@drawable/card_bg"
-        android:padding="@dimen/card_padding"
-        android:layout_marginBottom="@dimen/space_md">
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="图层控制（点击展开）"
-            android:textColor="#B8BDD2"
-            android:textSize="@dimen/text_section"
-            android:lineSpacingExtra="2dp"
-            android:maxLines="2" />
+            android:minHeight="@dimen/touch_spinner"
+            android:layout_marginBottom="@dimen/space_md" />
 
         <LinearLayout
-            android:id="@+id/controlsContent"
+            android:id="@+id/controlCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:layout_marginTop="@dimen/space_sm"
-            android:visibility="gone">
+            android:clickable="true"
+            android:focusable="true"
+            android:background="@drawable/card_bg"
+            android:padding="@dimen/card_padding"
+            android:layout_marginBottom="@dimen/space_md">
 
             <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="水平位置 X"
-                android:textColor="#FFFFFF"
-                android:textSize="@dimen/text_body" />
-            <SeekBar
-                android:id="@+id/seekX"
                 android:layout_width="match_parent"
-                android:layout_height="@dimen/touch_seekbar"
-                android:minHeight="@dimen/touch_seekbar"
-                android:max="100"
-                android:progress="25" />
+                android:layout_height="wrap_content"
+                android:text="图层控制（点击展开）：位置 / 大小 / 透明度"
+                android:textColor="#B8BDD2"
+                android:textSize="@dimen/text_section"
+                android:lineSpacingExtra="2dp"
+                android:maxLines="2" />
+
+            <LinearLayout
+                android:id="@+id/controlsContent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="@dimen/space_sm"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="水平位置 X"
+                    android:textColor="#FFFFFF"
+                    android:textSize="@dimen/text_body" />
+                <SeekBar
+                    android:id="@+id/seekX"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_seekbar"
+                    android:minHeight="@dimen/touch_seekbar"
+                    android:max="100"
+                    android:progress="25" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="垂直位置 Y"
+                    android:textColor="#FFFFFF"
+                    android:textSize="@dimen/text_body" />
+                <SeekBar
+                    android:id="@+id/seekY"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_seekbar"
+                    android:minHeight="@dimen/touch_seekbar"
+                    android:max="100"
+                    android:progress="25" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="宽度"
+                    android:textColor="#FFFFFF"
+                    android:textSize="@dimen/text_body" />
+                <SeekBar
+                    android:id="@+id/seekW"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_seekbar"
+                    android:minHeight="@dimen/touch_seekbar"
+                    android:max="100"
+                    android:progress="50" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="高度"
+                    android:textColor="#FFFFFF"
+                    android:textSize="@dimen/text_body" />
+                <SeekBar
+                    android:id="@+id/seekH"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_seekbar"
+                    android:minHeight="@dimen/touch_seekbar"
+                    android:max="100"
+                    android:progress="50" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="透明度"
+                    android:textColor="#FFFFFF"
+                    android:textSize="@dimen/text_body" />
+                <SeekBar
+                    android:id="@+id/seekAlpha"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_seekbar"
+                    android:minHeight="@dimen/touch_seekbar"
+                    android:max="100"
+                    android:progress="100" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="@dimen/space_sm">
 
             <TextView
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:text="垂直位置 Y"
+                android:layout_weight="1"
+                android:text="已安装应用（点击投到仪表盘）"
+                android:textColor="#B8BDD2"
+                android:textSize="@dimen/text_section"
+                android:lineSpacingExtra="2dp"
+                android:maxLines="2" />
+
+            <CheckBox
+                android:id="@+id/showSystemAppsCheck"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_checkbox"
+                android:minHeight="@dimen/touch_checkbox"
+                android:checked="true"
+                android:buttonTint="#00D4FF"
+                android:text="系统应用"
                 android:textColor="#FFFFFF"
                 android:textSize="@dimen/text_body" />
-            <SeekBar
-                android:id="@+id/seekY"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/touch_seekbar"
-                android:minHeight="@dimen/touch_seekbar"
-                android:max="100"
-                android:progress="25" />
+        </LinearLayout>
+
+        <ListView
+            android:id="@+id/appList"
+            android:layout_width="match_parent"
+            android:layout_height="260dp"
+            android:background="@drawable/card_bg"
+            android:divider="#2A2E3D"
+            android:dividerHeight="1dp" />
+
+        <TextView
+            android:id="@+id/emptyAppList"
+            android:layout_width="match_parent"
+            android:layout_height="240dp"
+            android:background="@drawable/card_bg"
+            android:gravity="center"
+            android:padding="@dimen/card_padding"
+            android:lineSpacingExtra="2dp"
+            android:text="未获取到可启动应用。
+
+如果是手机系统，请在系统设置里允许本应用“获取应用列表”；
+FX11 车机如出现该提示，请检查 QUERY_ALL_PACKAGES/包可见性策略。"
+            android:textColor="#8B8FA3"
+            android:textSize="@dimen/text_body"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- ============ 方式二容器：仪表盘投屏 ============ -->
+    <LinearLayout
+        android:id="@+id/modeDashboardContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="@dimen/card_padding"
+            android:layout_marginBottom="@dimen/space_md">
 
             <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="宽度"
-                android:textColor="#FFFFFF"
-                android:textSize="@dimen/text_body" />
-            <SeekBar
-                android:id="@+id/seekW"
                 android:layout_width="match_parent"
-                android:layout_height="@dimen/touch_seekbar"
-                android:minHeight="@dimen/touch_seekbar"
-                android:max="100"
-                android:progress="50" />
+                android:layout_height="wrap_content"
+                android:text="仪表盘投屏（自绘数字仪表）"
+                android:textColor="#FFFFFF"
+                android:textSize="@dimen/text_section"
+                android:textStyle="bold"
+                android:layout_marginBottom="@dimen/space_sm" />
 
             <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="高度"
-                android:textColor="#FFFFFF"
-                android:textSize="@dimen/text_body" />
-            <SeekBar
-                android:id="@+id/seekH"
                 android:layout_width="match_parent"
-                android:layout_height="@dimen/touch_seekbar"
-                android:minHeight="@dimen/touch_seekbar"
-                android:max="100"
-                android:progress="50" />
+                android:layout_height="wrap_content"
+                android:lineSpacingExtra="2dp"
+                android:text="不依赖原车画面，用自带特斯拉风格数字仪表（车速/转速/档位/灯光/地图）投到仪表盘。先“预览”在中控看效果，确认后“投物理屏”真正上仪表；再点一次恢复原厂仪表。"
+                android:textColor="#8B8FA3"
+                android:textSize="@dimen/text_caption" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="透明度"
-                android:textColor="#FFFFFF"
-                android:textSize="@dimen/text_body" />
-            <SeekBar
-                android:id="@+id/seekAlpha"
+            <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="@dimen/touch_seekbar"
-                android:minHeight="@dimen/touch_seekbar"
-                android:max="100"
-                android:progress="100" />
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="@dimen/space_md">
+
+                <Button
+                    android:id="@+id/dashboardBtn"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/touch_button_secondary"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="@dimen/space_sm"
+                    android:minHeight="@dimen/touch_button_secondary"
+                    android:text="预览（中控窗口）"
+                    android:textSize="@dimen/text_button"
+                    android:textColor="#00D4FF"
+                    android:textAllCaps="false"
+                    android:background="@drawable/btn_secondary" />
+
+                <Button
+                    android:id="@+id/dashboardScreenBtn"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/touch_button_secondary"
+                    android:layout_weight="1"
+                    android:minHeight="@dimen/touch_button_secondary"
+                    android:text="投物理屏"
+                    android:textSize="@dimen/text_button"
+                    android:textColor="#4CD964"
+                    android:textAllCaps="false"
+                    android:background="@drawable/btn_secondary" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 
+    <!-- ============ 方式三容器：仪表地图（AVM） ============ -->
+    <LinearLayout
+        android:id="@+id/modeAvmContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/avmCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="@dimen/card_padding"
+            android:layout_marginBottom="@dimen/space_md">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="仪表地图（AVM 官方通道）"
+                    android:textColor="#B8BDD2"
+                    android:textSize="@dimen/text_section"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/avmStatusText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/space_md"
+                    android:maxWidth="280dp"
+                    android:maxLines="2"
+                    android:gravity="end|center_vertical"
+                    android:text="未连接"
+                    android:textColor="#FFC857"
+                    android:textSize="@dimen/text_caption" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_sm"
+                android:lineSpacingExtra="2dp"
+                android:text="走官方 OneOS API，把原厂地图直接渲染到仪表盘（不依赖自绘画面），用于验证官方投屏通道。"
+                android:textColor="#8B8FA3"
+                android:textSize="@dimen/text_caption" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="@dimen/space_md">
+
+                <Button
+                    android:id="@+id/avmStartBtn"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/touch_button_secondary"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="@dimen/space_sm"
+                    android:background="@drawable/btn_primary"
+                    android:minHeight="@dimen/touch_button_secondary"
+                    android:text="启用仪表地图"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="@dimen/text_button" />
+
+                <Button
+                    android:id="@+id/avmStopBtn"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/touch_button_secondary"
+                    android:layout_weight="1"
+                    android:background="@drawable/btn_secondary"
+                    android:minHeight="@dimen/touch_button_secondary"
+                    android:text="停止"
+                    android:textAllCaps="false"
+                    android:textColor="#FF6B6B"
+                    android:textSize="@dimen/text_button" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 方式一动作按钮（车机大屏自动横排） -->
     <Button
         android:id="@+id/testBtn"
         android:layout_width="match_parent"
         android:layout_height="@dimen/touch_button_primary"
         android:minHeight="@dimen/touch_button_primary"
-        android:text="先预检仪表，再测试投屏"
+        android:text="测试投屏"
         android:textSize="@dimen/text_button"
         android:textColor="#FFFFFF"
         android:textAllCaps="false"
@@ -289,59 +556,63 @@
         android:background="@drawable/btn_secondary"
         android:layout_marginBottom="@dimen/space_md" />
 
-    <!-- App List header -->
+    <!-- 共用底层：物理切屏自测 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:layout_marginBottom="@dimen/space_sm">
+        android:orientation="vertical"
+        android:background="@drawable/card_bg"
+        android:padding="@dimen/card_padding"
+        android:layout_marginBottom="@dimen/space_md">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="共用底层 · 物理切屏自测"
+                android:textColor="#B8BDD2"
+                android:textSize="@dimen/text_section"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/switchStatusText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/space_md"
+                android:maxWidth="280dp"
+                android:maxLines="2"
+                android:gravity="end|center_vertical"
+                android:text="未切屏"
+                android:textColor="#FFC857"
+                android:textSize="@dimen/text_caption" />
+        </LinearLayout>
 
         <TextView
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="已安装应用（点击投屏）"
-            android:textColor="#B8BDD2"
-            android:textSize="@dimen/text_section"
+            android:layout_marginTop="@dimen/space_sm"
             android:lineSpacingExtra="2dp"
-            android:maxLines="2" />
+            android:text="上面投屏方式共用的底层能力：把仪表屏从 QNX 切到 Android 显示源。先单独自测：切屏成功仪表应黑屏或出现 Android 画面；再点一次恢复原厂仪表。"
+            android:textColor="#8B8FA3"
+            android:textSize="@dimen/text_caption" />
 
-        <CheckBox
-            android:id="@+id/showSystemAppsCheck"
-            android:layout_width="wrap_content"
-            android:layout_height="@dimen/touch_checkbox"
-            android:minHeight="@dimen/touch_checkbox"
-            android:checked="true"
-            android:buttonTint="#00D4FF"
-            android:text="系统应用"
-            android:textColor="#FFFFFF"
-            android:textSize="@dimen/text_body" />
+        <Button
+            android:id="@+id/switchBtn"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/touch_button_secondary"
+            android:layout_marginTop="@dimen/space_md"
+            android:background="@drawable/btn_secondary"
+            android:minHeight="@dimen/touch_button_secondary"
+            android:text="手动切屏 / 恢复原厂"
+            android:textAllCaps="false"
+            android:textColor="#00D4FF"
+            android:textSize="@dimen/text_button" />
     </LinearLayout>
-
-    <ListView
-        android:id="@+id/appList"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="@drawable/card_bg"
-        android:divider="#2A2E3D"
-        android:dividerHeight="1dp" />
-
-    <TextView
-        android:id="@+id/emptyAppList"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="@drawable/card_bg"
-        android:gravity="center"
-        android:padding="@dimen/card_padding"
-        android:lineSpacingExtra="2dp"
-        android:text="未获取到可启动应用。
-
-如果是手机系统，请在系统设置里允许本应用“获取应用列表”；
-FX11 车机如出现该提示，请检查 QUERY_ALL_PACKAGES/包可见性策略。"
-        android:textColor="#8B8FA3"
-        android:textSize="@dimen/text_body"
-        android:visibility="gone" />
 </LinearLayout>
+</org.clusterprojector.app.ClusterScrollView>

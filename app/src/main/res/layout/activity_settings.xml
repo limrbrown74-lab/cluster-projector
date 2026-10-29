@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0F1117"
+    android:orientation="vertical"
+    android:padding="@dimen/screen_padding">
+
+    <!-- 标题栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="@dimen/space_md">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="设置"
+            android:textColor="#FFFFFF"
+            android:textSize="@dimen/text_app_title"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/settingsBackBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/touch_button_secondary"
+            android:minHeight="@dimen/touch_button_secondary"
+            android:text="返回首页"
+            android:textSize="@dimen/text_button"
+            android:textColor="#00D4FF"
+            android:textAllCaps="false"
+            android:background="@drawable/btn_secondary" />
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- 投屏方式切换 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/card_bg"
+                android:padding="@dimen/card_padding"
+                android:layout_marginBottom="@dimen/space_md">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="投屏方式（首页同步生效）"
+                    android:textColor="#B8BDD2"
+                    android:textSize="@dimen/text_section"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="@dimen/space_sm" />
+
+                <RadioGroup
+                    android:id="@+id/modeGroup"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <RadioButton
+                        android:id="@+id/modeAppCast"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="@dimen/touch_radio"
+                        android:buttonTint="#00D4FF"
+                        android:text="应用投屏（镜像其他 App 画面）"
+                        android:textColor="#FFFFFF"
+                        android:textSize="@dimen/text_body" />
+
+                    <RadioButton
+                        android:id="@+id/modeDashboard"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="@dimen/touch_radio"
+                        android:buttonTint="#00D4FF"
+                        android:text="仪表盘投屏（自绘数字仪表）"
+                        android:textColor="#FFFFFF"
+                        android:textSize="@dimen/text_body" />
+
+                    <RadioButton
+                        android:id="@+id/modeAvmMap"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="@dimen/touch_radio"
+                        android:buttonTint="#00D4FF"
+                        android:text="仪表地图（AVM 官方通道）"
+                        android:textColor="#FFFFFF"
+                        android:textSize="@dimen/text_body" />
+                </RadioGroup>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_sm"
+                    android:lineSpacingExtra="2dp"
+                    android:text="切换后返回首页即生效。投屏中 App 被系统杀死后，下次启动会自动恢复原厂仪表。"
+                    android:textColor="#6F758A"
+                    android:textSize="@dimen/text_caption" />
+            </LinearLayout>
+
+            <!-- 仪表管理 -->
+            <LinearLayout
+                android:id="@+id/dashboardManageCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="@drawable/card_bg"
+                android:padding="@dimen/card_padding"
+                android:layout_marginBottom="@dimen/space_md">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="仪表管理（元素显示 / 位置，点击进入）"
+                    android:textColor="#B8BDD2"
+                    android:textSize="@dimen/text_section"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- 打赏支持 -->
+            <LinearLayout
+                android:id="@+id/supportCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="@drawable/card_bg"
+                android:padding="@dimen/card_padding"
+                android:layout_marginBottom="@dimen/space_md">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="打赏支持（点击展开赞赏码）"
+                    android:textColor="#B8BDD2"
+                    android:textSize="@dimen/text_section"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:id="@+id/supportContent"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center_horizontal"
+                    android:layout_marginTop="@dimen/space_sm"
+                    android:visibility="gone">
+
+                    <ImageView
+                        android:layout_width="240dp"
+                        android:layout_height="240dp"
+                        android:src="@drawable/support_qr"
+                        android:contentDescription="赞赏码" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_sm"
+                        android:text="代码开源，咖啡自费 ☕ 觉得有用就赞赏一杯"
+                        android:textColor="#8B8FA3"
+                        android:textSize="@dimen/text_caption"
+                        android:gravity="center" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- 关于 -->
+            <LinearLayout
+                android:id="@+id/aboutCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="@drawable/card_bg"
+                android:padding="@dimen/card_padding"
+                android:layout_marginBottom="@dimen/space_md">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="关于（点击查看）"
+                    android:textColor="#B8BDD2"
+                    android:textSize="@dimen/text_section"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- 免责声明 -->
+            <LinearLayout
+                android:id="@+id/disclaimerCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="@drawable/card_bg"
+                android:padding="@dimen/card_padding"
+                android:layout_marginBottom="@dimen/space_md">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="免责声明（点击查看）"
+                    android:textColor="#B8BDD2"
+                    android:textSize="@dimen/text_section"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- 开源许可 -->
+            <LinearLayout
+                android:id="@+id/licenseCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="@drawable/card_bg"
+                android:padding="@dimen/card_padding"
+                android:layout_marginBottom="@dimen/space_md">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="开源许可（MIT，点击查看）"
+                    android:textColor="#B8BDD2"
+                    android:textSize="@dimen/text_section"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:padding="@dimen/card_padding"
+                android:layout_marginBottom="@dimen/space_md"
+                android:text="仪表投屏 · 仅供车机研究使用"
+                android:textColor="#6F758A"
+                android:textSize="@dimen/text_caption" />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

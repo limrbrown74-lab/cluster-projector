@@ -35,10 +35,14 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.clusterprojector.display.AvmServiceClient;
 import org.clusterprojector.display.CastController;
+import org.clusterprojector.display.ClusterDashboardHost;
+import org.clusterprojector.display.ClusterMapHost;
 import org.clusterprojector.display.ClusterPresentationProbe;
 import org.clusterprojector.display.DisplayEnumerator;
 import org.clusterprojector.display.DisplayTarget;
+import org.clusterprojector.display.Fx11DisplayProfile;
 import org.clusterprojector.display.WindowGeometry;
 
 import java.util.ArrayList;
@@ -56,7 +60,9 @@ public class MainActivity extends Activity {
     private DisplayEnumerator displayEnumerator;
 
     private TextView statusText;
+    private TextView versionText;
     private TextView permissionStatusText;
+    private View permissionDetails;
     private TextView permissionSummaryText;
     private ListView appList;
     private CheckBox showSystemAppsCheck;
@@ -65,11 +71,33 @@ public class MainActivity extends Activity {
     private SeekBar seekX, seekY, seekW, seekH, seekAlpha;
     private Button testBtn, stopBtn, permissionButton;
 
+    // 投屏方式切换（首页只显示当前方式，设置页可切换）
+    private TextView currentModeTitle;
+    private Button moreModesBtn;
+    private android.view.View modeAppCastContainer;
+    private android.view.View modeDashboardContainer;
+    private android.view.View modeAvmContainer;
+
     private CastController controller;
     private DisplayTarget targetDisplay;
     private Display targetDisplayObj;
     private String pendingPackage;
     private boolean projecting;
+
+    // AVM 地图直通
+    private AvmServiceClient avmClient;
+    private ClusterMapHost clusterMapHost;
+    private TextView avmStatusText;
+    private Button avmStartBtn;
+    private Button avmStopBtn;
+
+    // 仪表盘投物理屏（切屏链路）
+    private ClusterDashboardHost dashboardHost;
+    private Button dashboardScreenBtn;
+
+    // v1.5.0: ECARX/VHAL 物理切屏
+    private TextView switchStatusText;
+    private Button switchBtn;
     private boolean projectionPermissionPending;
     private boolean mediaProjectionGranted;
     private boolean mediaProjectionRejected;
@@ -112,11 +140,39 @@ public class MainActivity extends Activity {
             displayEnumerator = new DisplayEnumerator(this);
 
             statusText = findViewById(R.id.statusText);
+            versionText = findViewById(R.id.versionText);
+            versionText.setText(readVersionLabel());
             permissionStatusText = findViewById(R.id.permissionStatusText);
             permissionSummaryText = findViewById(R.id.permissionSummaryText);
             permissionButton = findViewById(R.id.permissionButton);
+            // 权限卡折叠：点击展开/收起详情
+            LinearLayout permissionCard = findViewById(R.id.permissionCard);
+            permissionDetails = findViewById(R.id.permissionDetails);
+            permissionCard.setOnClickListener(v -> {
+                boolean visible = permissionDetails.getVisibility() == View.VISIBLE;
+                permissionDetails.setVisibility(visible ? View.GONE : View.VISIBLE);
+                AppLog.i("MainActivity", "permission details -> "
+                        + (visible ? "collapsed" : "expanded"));
+            });
+
+            // 投屏方式切换：首页只显示当前方式，设置页可切换
+            currentModeTitle = findViewById(R.id.currentModeTitle);
+            moreModesBtn = findViewById(R.id.moreModesBtn);
+            modeAppCastContainer = findViewById(R.id.modeAppCastContainer);
+            modeDashboardContainer = findViewById(R.id.modeDashboardContainer);
+            modeAvmContainer = findViewById(R.id.modeAvmContainer);
+            moreModesBtn.setOnClickListener(v ->
+                    startActivity(new Intent(MainActivity.this, SettingsActivity.class)));
+            applyCastMode();
+
             appList = findViewById(R.id.appList);
             appList.setEmptyView(findViewById(R.id.emptyAppList));
+            applyAppListHeight();
+            // 列表区域不拦截触摸：列表内自身滚动，列表外滚页面
+            ClusterScrollView rootScroll = findViewById(R.id.rootScroll);
+            if (rootScroll != null) {
+                rootScroll.setExcludedChild(appList);
+            }
             showSystemAppsCheck = findViewById(R.id.showSystemAppsCheck);
             showSystemAppsCheck.setOnCheckedChangeListener((button, checked) -> applyAppListFilter());
             appList.setOnItemClickListener((parent, view, pos, id) -> {
@@ -145,12 +201,49 @@ public class MainActivity extends Activity {
             testBtn = findViewById(R.id.testBtn);
             stopBtn = findViewById(R.id.stopBtn);
             Button logBtn = findViewById(R.id.logBtn);
+            Button dashboardBtn = findViewById(R.id.dashboardBtn);
             arrangeLargeScreenActions(testBtn, stopBtn, logBtn);
 
             permissionButton.setOnClickListener(v -> onPermissionButtonClicked());
             testBtn.setOnClickListener(v -> onTestClicked());
             stopBtn.setOnClickListener(v -> stopProjection("手动停止"));
             logBtn.setOnClickListener(v -> showLogs());
+            dashboardBtn.setOnClickListener(v -> startActivity(
+                    new Intent(MainActivity.this, DashboardActivity.class)));
+
+            // 仪表盘投物理屏（切屏链路）
+            dashboardScreenBtn = findViewById(R.id.dashboardScreenBtn);
+            dashboardScreenBtn.setOnClickListener(v -> onDashboardScreenClicked());
+
+            // AVM 地图直通
+            avmStatusText = findViewById(R.id.avmStatusText);
+            avmStartBtn = findViewById(R.id.avmStartBtn);
+            avmStopBtn = findViewById(R.id.avmStopBtn);
+            avmClient = new AvmServiceClient(this);
+            avmClient.setCallback(new AvmServiceClient.ServiceCallback() {
+                @Override public void onConnected() {
+                    runOnUiThread(() -> {
+                        avmStatusText.setText("已连接 · Navi=" + (avmClient.isNaviReady() ? "√" : "×")
+                                + " Parking=" + (avmClient.isParkingReady() ? "√" : "×"));
+                        avmStatusText.setTextColor(0xFF00D4FF);
+                        AppLog.i("MainActivity", "AVM service connected");
+                    });
+                }
+                @Override public void onDisconnected() {
+                    runOnUiThread(() -> {
+                        avmStatusText.setText("已断开");
+                        avmStatusText.setTextColor(0xFFFFC857);
+                    });
+                }
+            });
+            avmStartBtn.setOnClickListener(v -> onAvmStartClicked());
+            avmStopBtn.setOnClickListener(v -> onAvmStopClicked());
+            avmClient.connect();
+
+            // v1.5.0: 物理切屏按钮
+            switchStatusText = findViewById(R.id.switchStatusText);
+            switchBtn = findViewById(R.id.switchBtn);
+            switchBtn.setOnClickListener(v -> onSwitchClicked());
 
             SeekBar.OnSeekBarChangeListener sliderListener = new SeekBar.OnSeekBarChangeListener() {
                 @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
@@ -199,6 +292,18 @@ public class MainActivity extends Activity {
                 + " device=" + Build.DEVICE
                 + " product=" + Build.PRODUCT
                 + " fingerprint=" + Build.FINGERPRINT);
+    }
+
+    private String readVersionLabel() {
+        try {
+            PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            long versionCode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                    ? info.getLongVersionCode() : info.versionCode;
+            return "版本 " + info.versionName + " (" + versionCode + ")";
+        } catch (Throwable t) {
+            AppLog.w("MainActivity", "read UI version failed: " + t);
+            return "版本未知";
+        }
     }
 
     private void toggleControls() {
@@ -523,9 +628,13 @@ public class MainActivity extends Activity {
                 if (entry.systemApp) systemAppCount++;
             }
             applyAppListFilter();
-            AppLog.i("MainActivity", "可启动应用: total=" + allLaunchableApps.size()
+            AppLog.i("MainActivity", "可启动应用: installed=" + installedApplications.size()
+                    + " launcherResolve=" + launcherActivities.size()
+                    + " total=" + allLaunchableApps.size()
                     + " system=" + systemAppCount
-                    + " thirdParty=" + (allLaunchableApps.size() - systemAppCount));
+                    + " thirdParty=" + (allLaunchableApps.size() - systemAppCount)
+                    + " appList=" + (appList != null));
+            ensureAppListVisible();
         } catch (Throwable t) {
             allLaunchableApps.clear();
             systemAppCount = 0;
@@ -570,6 +679,51 @@ public class MainActivity extends Activity {
         refreshPermissionStatus();
     }
 
+    /** 列表高度自适应：手机小屏 260dp，车机/大屏 420dp（ScrollView 布局下固定高度）。 */
+    private void applyAppListHeight() {
+        if (appList == null) return;
+        int targetDp = isLargeScreen() ? 420 : 260;
+        ViewGroup.LayoutParams lp = appList.getLayoutParams();
+        lp.height = Math.round(targetDp * getResources().getDisplayMetrics().density);
+        appList.setLayoutParams(lp);
+        AppLog.i("MainActivity", "appList fixed height=" + targetDp + "dp"
+                + " largeScreen=" + isLargeScreen());
+    }
+
+    /**
+     * 列表可见性兜底：小屏设备上首页固定内容较多时，weight 分配的列表可能被压扁。
+     * 检测到列表实际高度过小时，强制到目标高度（当前布局列表已是固定高度，
+     * 该兜底仅防御异常测量）。
+     */
+    private void ensureAppListVisible() {
+        if (appList == null || modeAppCastContainer == null) return;
+        if (SettingsActivity.readCastMode(this) != SettingsActivity.MODE_APP_CAST) return;
+        appList.post(() -> {
+            if (appList == null) return;
+            int h = appList.getHeight();
+            AppLog.i("MainActivity", "appList height=" + h + "px"
+                    + " containerVisible="
+                    + (modeAppCastContainer.getVisibility() == View.VISIBLE));
+            int targetDp = isLargeScreen() ? 420 : 260;
+            int targetPx = Math.round(targetDp * getResources().getDisplayMetrics().density);
+            if (h < targetPx - 8
+                    && modeAppCastContainer.getVisibility() == View.VISIBLE) {
+                ViewGroup.LayoutParams lp = appList.getLayoutParams();
+                lp.height = targetPx;
+                appList.setLayoutParams(lp);
+                AppLog.w("MainActivity", "appList height " + h
+                        + "px < target " + targetPx + "px, force to fixed height");
+            }
+        });
+    }
+
+    /** 车机/大屏判定（与 sw600dp 语义一致）。 */
+    private boolean isLargeScreen() {
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        return Math.min(dm.widthPixels, dm.heightPixels)
+                >= 600f * dm.density;
+    }
+
     private static class AppEntry {
         final String packageName;
         final String label;
@@ -602,6 +756,112 @@ public class MainActivity extends Activity {
                     .setText((entry.systemApp ? "系统 · " : "三方 · ") + entry.packageName);
             return convertView;
         }
+    }
+
+    // ------------------------------------------------------------------
+    // AVM 地图直通
+    // ------------------------------------------------------------------
+
+    private void onAvmStartClicked() {
+        if (targetDisplayObj == null) {
+            toast("请先选择目标显示设备", Toast.LENGTH_SHORT);
+            return;
+        }
+        if (clusterMapHost != null && clusterMapHost.isRunning()) {
+            toast("仪表地图已在运行", Toast.LENGTH_SHORT);
+            return;
+        }
+        AppLog.i("MainActivity", "启动 AVM 地图直通, display=" + targetDisplayObj.getDisplayId());
+        clusterMapHost = new ClusterMapHost(this, targetDisplayObj, avmClient);
+        clusterMapHost.start();
+        avmStatusText.setText("运行中 · " + clusterMapHost.getStatus());
+        avmStatusText.setTextColor(0xFF4CD964);
+        toast("已启用仪表地图，请观察仪表盘", Toast.LENGTH_LONG);
+    }
+
+    private void onAvmStopClicked() {
+        if (clusterMapHost != null) {
+            clusterMapHost.stop();
+            clusterMapHost = null;
+        }
+        avmStatusText.setText("已停止");
+        avmStatusText.setTextColor(0xFFFFC857);
+        AppLog.i("MainActivity", "停止 AVM 地图直通");
+    }
+
+    // ------------------------------------------------------------------
+    // v1.5.0: ECARX/VHAL 物理切屏
+    // ------------------------------------------------------------------
+
+    private void onSwitchClicked() {
+        if (controller != null && controller.isSwitchActive()) {
+            // 已在切屏状态：恢复原厂
+            AppLog.i("MainActivity", "manual switch: restore stock");
+            new Thread(() -> {
+                org.clusterprojector.display.ClusterProjectionSwitch.disable();
+                runOnUiThread(() -> {
+                    if (switchStatusText != null) {
+                        switchStatusText.setText("已恢复原厂仪表");
+                        switchStatusText.setTextColor(0xFF00D4FF);
+                    }
+                    toast("已恢复原厂仪表", Toast.LENGTH_SHORT);
+                });
+            }, "manual-switch-off").start();
+            return;
+        }
+        // 未切屏：手动开启（ECARX 优先，VHAL 兜底）
+        AppLog.i("MainActivity", "manual switch: enable");
+        final android.content.Context ctx = getApplicationContext();
+        new Thread(() -> {
+            boolean ok = org.clusterprojector.display.ClusterProjectionSwitch.enable(ctx, true, true);
+            final String path = org.clusterprojector.display.ClusterProjectionSwitch.activeName();
+            runOnUiThread(() -> {
+                if (switchStatusText != null) {
+                    switchStatusText.setText(ok ? ("已切屏（" + path + "）") : "切屏失败");
+                    switchStatusText.setTextColor(ok ? 0xFF4CD964 : 0xFFFFC857);
+                }
+                toast(ok ? "仪表已切到 Android 显示（" + path + "）" : "切屏失败，请看日志", Toast.LENGTH_LONG);
+            });
+        }, "manual-switch").start();
+    }
+
+    /**
+     * 仪表盘投物理屏（切屏链路）：ECARX/VHAL 物理切屏 + Presentation 承载
+     * {@link ClusterDashboardView} 投到仪表物理屏。与"应用投屏"和"仪表地图"互斥。
+     */
+    private void onDashboardScreenClicked() {
+        if (dashboardHost != null && dashboardHost.isRunning()) {
+            AppLog.i("MainActivity", "dashboard screen: stop");
+            dashboardHost.stop();
+            dashboardHost = null;
+            dashboardScreenBtn.setText("仪表盘投物理屏");
+            dashboardScreenBtn.setTextColor(0xFF00D4FF);
+            toast("已停止仪表盘投屏，原厂仪表已恢复", Toast.LENGTH_SHORT);
+            return;
+        }
+        if (controller != null && controller.isRunning()) {
+            toast("应用投屏运行中，请先停止再投仪表盘", Toast.LENGTH_SHORT);
+            return;
+        }
+        if (clusterMapHost != null && clusterMapHost.isRunning()) {
+            toast("仪表地图运行中，请先停止再投仪表盘", Toast.LENGTH_SHORT);
+            return;
+        }
+        if (targetDisplayObj == null) {
+            toast("请先选择目标显示设备（推荐 1920x532 仪表）", Toast.LENGTH_SHORT);
+            return;
+        }
+        AppLog.i("MainActivity", "dashboard screen: start display=" + targetDisplayObj.getDisplayId());
+        dashboardHost = new ClusterDashboardHost(this, targetDisplayObj);
+        dashboardHost.setCallback((ok, path) -> {
+            dashboardScreenBtn.setText(ok ? "停止仪表盘投屏（" + path + "）" : "仪表盘投屏（切屏失败）");
+            dashboardScreenBtn.setTextColor(ok ? 0xFF4CD964 : 0xFFFFC857);
+            toast(ok ? "仪表已切屏（" + path + "），仪表盘投屏中" : "切屏失败，请看日志", Toast.LENGTH_LONG);
+        });
+        dashboardHost.start();
+        dashboardScreenBtn.setText("停止仪表盘投屏（切换中）");
+        dashboardScreenBtn.setTextColor(0xFFFFC857);
+        toast("正在物理切屏并投放仪表盘，请观察仪表", Toast.LENGTH_LONG);
     }
 
     private void pickTargetDisplay() {
@@ -695,8 +955,11 @@ public class MainActivity extends Activity {
 
         boolean showDetails = !overlayGranted || mediaProjectionRejected || appListMissing
                 || !optionalMissing.isEmpty() || launchableAppCount < 0 || isMiuiLikeRom();
-        permissionStatusText.setVisibility(showDetails ? View.VISIBLE : View.GONE);
         permissionStatusText.setText(sb.toString().trim());
+        // 存在阻断性问题时自动展开详情；否则保持用户当前的折叠/展开状态
+        if (showDetails && permissionDetails != null) {
+            permissionDetails.setVisibility(View.VISIBLE);
+        }
 
         String summary;
         int summaryColor;
@@ -868,6 +1131,17 @@ public class MainActivity extends Activity {
             toast("未选择可用的仪表 Display（FX11 应为 1920x532）",
                     Toast.LENGTH_LONG);
             AppLog.e("MainActivity", "Display 不可见或不是仪表: " + targetDisplay);
+            return;
+        }
+        if (Fx11DisplayProfile.isClusterSize(
+                targetDisplayObj.getWidth(), targetDisplayObj.getHeight())) {
+            // v1.4.0：FX11 优先使用目标 Display 的顶层 Overlay + GLSurfaceView + MediaProjection。
+            // Presentation 只作为顶层 Overlay 被系统拒绝时的回退。
+            presentationProbePassedDisplayId = Integer.MIN_VALUE;
+            AppLog.i("MainActivity", "FX11 overlay mirror route selected; skip plain View preflight: display="
+                    + targetDisplayObj.getDisplayId());
+            setStatus("正在准备顶层 Overlay 镜像链路，请完成录屏授权…");
+            requestProjection();
             return;
         }
         if (presentationProbePassedDisplayId == targetDisplayObj.getDisplayId()) {
@@ -1075,9 +1349,15 @@ public class MainActivity extends Activity {
                             + virtualDisplayId);
                     runOnUiThread(() -> {
                         String host = controller == null ? "UNKNOWN" : controller.getHostName();
-                        setStatus(mode == CastController.MODE_MIRROR
-                                ? "兼容镜像捕获已启动（" + host + "），正在等待仪表第一帧…"
-                                : "直出虚拟屏已就绪（" + host + "）: vd=" + virtualDisplayId);
+                        if (mode == CastController.MODE_VENDOR_MIRROR) {
+                            setStatus("Presentation 回退链路已建立（vd=" + virtualDisplayId
+                                    + "）：应用会在中控打开，仪表盘应同步显示");
+                        } else if (mode == CastController.MODE_MIRROR) {
+                            setStatus("顶层 Overlay 镜像已建立（vd=" + virtualDisplayId
+                                    + "）：正在等待仪表第一帧…");
+                        } else {
+                            setStatus("直出虚拟屏已就绪（" + host + "）: vd=" + virtualDisplayId);
+                        }
                     });
                 }
 
@@ -1087,9 +1367,14 @@ public class MainActivity extends Activity {
                     runOnUiThread(() -> {
                         String host = controller == null ? "UNKNOWN" : controller.getHostName();
                         applyDefaultSliderLayout(mode);
-                        setStatus(mode == CastController.MODE_MIRROR
-                                ? "已自动切到兼容镜像：中控会打开应用，仪表等待第一帧（" + host + "）"
-                                : "直出模式：" + reason);
+                        if (mode == CastController.MODE_VENDOR_MIRROR) {
+                            setStatus("Presentation 回退：请看仪表盘是否同步中控");
+                        } else if (mode == CastController.MODE_MIRROR) {
+                            setStatus("已启用顶层 Overlay + GL 镜像：中控继续操作，仪表等待第一帧（"
+                                    + host + "）");
+                        } else {
+                            setStatus("直出模式：" + reason);
+                        }
                     });
                 }
 
@@ -1100,6 +1385,10 @@ public class MainActivity extends Activity {
                         String host = controller == null ? "UNKNOWN" : controller.getHostName();
                         if (!success) {
                             setStatus("启动失败: " + packageName + " / " + error);
+                        } else if (controller != null
+                                && controller.getMode() == CastController.MODE_VENDOR_MIRROR) {
+                            setStatus("中控已启动：" + packageName
+                                    + "；Presentation 回退应同步到仪表盘，无画面请立即分享日志");
                         } else if (TestCastActivity.class.getName().equals(packageName)
                                 && controller != null
                                 && controller.getMode() == CastController.MODE_DIRECT) {
@@ -1107,7 +1396,8 @@ public class MainActivity extends Activity {
                                     + "），请看仪表盘；无画面请立即分享日志");
                         } else if (controller != null
                                 && controller.getMode() == CastController.MODE_MIRROR) {
-                            setStatus("兼容镜像：中控会打开应用，仪表盘等待第一帧（" + host + "）…");
+                            setStatus("顶层 Overlay 镜像：中控已打开应用，仪表盘等待第一帧（"
+                                    + host + "）…");
                         } else {
                             setStatus("直出启动请求已被系统接受（" + host + "）：" + packageName
                                     + "；若仪表仍无画面，请分享日志判断是否被重定向");
@@ -1120,6 +1410,21 @@ public class MainActivity extends Activity {
                     runOnUiThread(() -> {
                         String host = controller == null ? "UNKNOWN" : controller.getHostName();
                         setStatus("真实捕获第一帧已输出到仪表盘（" + host + "）");
+                    });
+                }
+
+                @Override public void onPhysicalSwitchDone(boolean ok, String path) {
+                    AppLog.i("MainActivity", "physical switch done: ok=" + ok + " path=" + path);
+                    runOnUiThread(() -> {
+                        if (switchStatusText != null) {
+                            switchStatusText.setText(ok
+                                    ? ("已切屏（" + path + "）")
+                                    : "切屏失败，仅 Android 层尝试（详见日志）");
+                            switchStatusText.setTextColor(ok ? 0xFF4CD964 : 0xFFFFC857);
+                        }
+                        if (ok) {
+                            setStatus("仪表显示源已切换（" + path + "），正在投屏…");
+                        }
                     });
                 }
 
@@ -1140,7 +1445,7 @@ public class MainActivity extends Activity {
                     + controller.getDiagnosticState());
             if (controlsContent != null) controlsContent.setVisibility(View.VISIBLE);
             displaySpinner.setEnabled(false);
-            applyDefaultSliderLayout(CastController.MODE_DIRECT);
+            applyDefaultSliderLayout(controller.getMode());
             if (pendingPackage != null) {
                 String pkg = pendingPackage;
                 pendingPackage = null;
@@ -1151,7 +1456,13 @@ public class MainActivity extends Activity {
                 controller.launchTestScreen(TestCastActivity.class);
             }
             startTestAfterProjection = false;
-            setStatus("仪表 Surface 已创建，等待虚拟屏...");
+            if (controller.getMode() == CastController.MODE_VENDOR_MIRROR) {
+                setStatus("仪表 Presentation 回退已创建，等待 MediaProjection...");
+            } else if (controller.getMode() == CastController.MODE_MIRROR) {
+                setStatus("仪表顶层 Overlay 已创建，等待 GL 镜像第一帧...");
+            } else {
+                setStatus("仪表 Surface 已创建，等待虚拟屏...");
+            }
         } catch (Throwable t) {
             AppLog.e("MainActivity", "beginCasting 异常", t);
             stopProjection(t.getMessage());
@@ -1191,6 +1502,15 @@ public class MainActivity extends Activity {
     }
 
     private void applyDefaultSliderLayout(int mode) {
+        if (mode == CastController.MODE_VENDOR_MIRROR) {
+            // v1.3.0 第一阶段先全屏验证物理仪表合成链路，缩放/透明度暂时固定。
+            seekX.setProgress(0);
+            seekY.setProgress(0);
+            seekW.setProgress(100);
+            seekH.setProgress(100);
+            seekAlpha.setProgress(100);
+            return;
+        }
         if (mode == CastController.MODE_MIRROR) {
             // 完整 contain 中控竖屏：高度填满仪表屏，宽度按中控宽高比计算，水平居中。
             android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
@@ -1232,8 +1552,33 @@ public class MainActivity extends Activity {
         if (statusText != null) statusText.setText(text);
     }
 
+    /** 按设置页选中的投屏方式切换首页展示（三种方式互斥，只显示当前一种）。 */
+    private void applyCastMode() {
+        if (currentModeTitle == null || modeAppCastContainer == null) return;
+        int mode = SettingsActivity.readCastMode(this);
+        boolean appCast = mode == SettingsActivity.MODE_APP_CAST;
+        boolean dashboard = mode == SettingsActivity.MODE_DASHBOARD;
+        boolean avmMap = mode == SettingsActivity.MODE_AVM_MAP;
+        modeAppCastContainer.setVisibility(appCast ? View.VISIBLE : View.GONE);
+        modeDashboardContainer.setVisibility(dashboard ? View.VISIBLE : View.GONE);
+        modeAvmContainer.setVisibility(avmMap ? View.VISIBLE : View.GONE);
+        currentModeTitle.setText(appCast ? "应用投屏"
+                : dashboard ? "仪表盘投屏" : "仪表地图（AVM）");
+        // 测试/停止按钮是"应用投屏"专属操作；其他方式下隐藏，日志按钮保持通用可见。
+        if (testBtn != null) {
+            testBtn.setVisibility(appCast ? View.VISIBLE : View.GONE);
+        }
+        if (stopBtn != null) {
+            stopBtn.setVisibility(appCast ? View.VISIBLE : View.GONE);
+        }
+        AppLog.i("MainActivity", "home mode -> " + currentModeTitle.getText()
+                + " (mode=" + mode + " appCast=" + appCast
+                + " dashboard=" + dashboard + " avm=" + avmMap + ")");
+    }
+
     @Override protected void onResume() {
         super.onResume();
+        applyCastMode();
         // 不在这里重建 Spinner：从悬浮窗/录屏授权页返回时，应保留用户手动选择的 Display。
         if (!displayListInitialized && displayEnumerator != null) {
             pickTargetDisplay();
@@ -1245,6 +1590,18 @@ public class MainActivity extends Activity {
     @Override protected void onDestroy() {
         super.onDestroy();
         dismissPresentationProbe("activity onDestroy");
+        if (dashboardHost != null) {
+            dashboardHost.stop();
+            dashboardHost = null;
+        }
+        if (clusterMapHost != null) {
+            clusterMapHost.stop();
+            clusterMapHost = null;
+        }
+        if (avmClient != null) {
+            avmClient.disconnect();
+            avmClient = null;
+        }
         if (controller != null) {
             controller.stop();
             controller = null;

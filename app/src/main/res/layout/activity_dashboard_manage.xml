@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0F1117"
+    android:orientation="vertical"
+    android:padding="@dimen/screen_padding">
+
+    <!-- 标题栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="@dimen/space_md">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="仪表管理"
+            android:textColor="#FFFFFF"
+            android:textSize="@dimen/text_app_title"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/manageBackBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/touch_button_secondary"
+            android:minHeight="@dimen/touch_button_secondary"
+            android:text="返回设置"
+            android:textSize="@dimen/text_button"
+            android:textColor="#00D4FF"
+            android:textAllCaps="false"
+            android:background="@drawable/btn_secondary" />
+    </LinearLayout>
+
+    <!-- 投屏叠加仪表总开关 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/card_bg"
+        android:padding="@dimen/card_padding"
+        android:layout_marginBottom="@dimen/space_md">
+
+        <CheckBox
+            android:id="@+id/mergeCheck"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_radio"
+            android:buttonTint="#00D4FF"
+            android:text="应用投屏时叠加透明仪表元素（车速/转速/档位等浮在地图之上）"
+            android:textColor="#FFFFFF"
+            android:textSize="@dimen/text_body" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_sm"
+            android:lineSpacingExtra="2dp"
+            android:text="开启后，把 App 镜像投到仪表盘时会在画面上层叠加自绘仪表（背景透明）。下方可逐个开关元素、调整位置（-100% ~ +100% 相对默认位置偏移）。"
+            android:textColor="#6F758A"
+            android:textSize="@dimen/text_caption" />
+    </LinearLayout>
+
+    <!-- 实时预览 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/card_bg"
+        android:padding="@dimen/card_padding"
+        android:layout_marginBottom="@dimen/space_md">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="@dimen/space_sm">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="实时预览（随下方配置变化）"
+                android:textColor="#B8BDD2"
+                android:textSize="@dimen/text_section"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/previewThemeBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_button_secondary"
+                android:minHeight="@dimen/touch_button_secondary"
+                android:text="夜间"
+                android:textSize="@dimen/text_button"
+                android:textColor="#00D4FF"
+                android:textAllCaps="false"
+                android:background="@drawable/btn_secondary" />
+        </LinearLayout>
+
+        <org.clusterprojector.display.ClusterDashboardView
+            android:id="@+id/previewView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:id="@+id/elementRows"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
+</LinearLayout>

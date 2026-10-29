@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.view.Display;
 import android.view.Gravity;
 import android.view.SurfaceHolder;
@@ -22,10 +23,9 @@ import android.widget.FrameLayout;
 /**
  * 仪表 Display 上的画面宿主。
  *
- * <p>优先使用 Android 官方 {@link Presentation}。FX11/ecarx 对普通
- * TYPE_APPLICATION_OVERLAY 可能“允许 addView 但不进入仪表物理合成层”，
- * Presentation 是普通第三方 App 向副屏输出的标准方式。若 Presentation 被系统拒绝，
- * 再回退到原来的 DisplayContext + overlay。
+ * <p>FX11 普通侧载优先使用目标 Display 上的 TYPE_APPLICATION_OVERLAY 顶层窗口，
+ * 再把 MediaProjection 的 Surface 输出到窗口内。该顺序对齐车机上已验证可用的
+ * “应用管家”链路。只有 overlay 被系统拒绝时才回退到标准 {@link Presentation}。
  */
 public final class OverlayWindowHost {
 
@@ -54,10 +54,16 @@ public final class OverlayWindowHost {
     private boolean added;
     private float opacity = 1f;
     private Mode mode = Mode.DIRECT;
+    private Mode initialMode = Mode.DIRECT;
 
     private SurfaceView directView;
     private MirrorGlSurfaceView mirrorView;
     private SurfaceCallback surfaceCallback;
+
+    /** 合并投屏：应用画面（镜像）之上叠加透明自绘仪表层。 */
+    private boolean mergeDashboard;
+    private boolean mergeApplied;
+    private ClusterDashboardView dashboardOverlay;
 
     private final SurfaceHolder.Callback directHolderCallback = new SurfaceHolder.Callback() {
         @Override public void surfaceCreated(SurfaceHolder holder) {
@@ -121,10 +127,158 @@ public final class OverlayWindowHost {
         this.surfaceCallback = callback;
     }
 
+    /**
+     * 合并投屏：开启后窗口改为全屏（1920x532），镜像画面居中显示原 bounds，
+     * 顶层叠加透明自绘仪表（背景关闭、只画元素）。关闭时恢复原样。
+     */
+    public synchronized void setMergeDashboard(boolean enabled) {
+        mergeDashboard = enabled;
+        tryApplyMergeLocked();
+    }
+
+    private void tryApplyMergeLocked() {
+        if (!added || container == null) return;
+        if (mergeDashboard && !mergeApplied) {
+            applyMergeLayoutLocked();
+        } else if (!mergeDashboard && mergeApplied) {
+            revertMergeLayoutLocked();
+        }
+    }
+
+    private void applyMergeLayoutLocked() {
+        try {
+            ClusterLog.i(TAG, "merge dashboard ON: display=" + display.getDisplayId()
+                    + " host=" + host + " mode=" + mode);
+            int fullW = Fx11DisplayProfile.CLUSTER_WIDTH;
+            int fullH = Fx11DisplayProfile.CLUSTER_HEIGHT;
+            if (host == Host.OVERLAY && windowParams != null) {
+                windowParams.x = 0;
+                windowParams.y = 0;
+                windowParams.width = fullW;
+                windowParams.height = fullH;
+                windowMgr.updateViewLayout(container, windowParams);
+            } else if (host == Host.PRESENTATION) {
+                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) container.getLayoutParams();
+                lp.width = fullW;
+                lp.height = fullH;
+                lp.leftMargin = 0;
+                lp.topMargin = 0;
+                container.setLayoutParams(lp);
+            }
+            // 镜像画面居中显示原 bounds（contain 模式）
+            if (mirrorView != null) {
+                FrameLayout.LayoutParams lp =
+                        (FrameLayout.LayoutParams) mirrorView.getLayoutParams();
+                lp.width = initialBounds.width;
+                lp.height = initialBounds.height;
+                lp.gravity = Gravity.CENTER;
+                mirrorView.setLayoutParams(lp);
+            }
+            if (directView != null) {
+                FrameLayout.LayoutParams lp =
+                        (FrameLayout.LayoutParams) directView.getLayoutParams();
+                lp.width = initialBounds.width;
+                lp.height = initialBounds.height;
+                lp.gravity = Gravity.CENTER;
+                directView.setLayoutParams(lp);
+            }
+            // 顶层透明仪表
+            if (dashboardOverlay == null) {
+                Context viewContext = host == Host.PRESENTATION
+                        ? presentation.getContext() : windowContext;
+                dashboardOverlay = new ClusterDashboardView(viewContext);
+                dashboardOverlay.setBackgroundEnabled(false);
+                dashboardOverlay.setVisibility(View.VISIBLE);
+                container.addView(dashboardOverlay, new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+                ClusterVehicleTelemetry.start();
+                ClusterLog.i(TAG, "transparent dashboard overlay attached on top");
+            }
+            mergeApplied = true;
+        } catch (Throwable t) {
+            ClusterLog.w(TAG, "merge layout apply failed", t);
+        }
+    }
+
+    private void revertMergeLayoutLocked() {
+        try {
+            ClusterLog.i(TAG, "merge dashboard OFF: display=" + display.getDisplayId());
+            if (dashboardOverlay != null) {
+                container.removeView(dashboardOverlay);
+                dashboardOverlay = null;
+            }
+            if (mirrorView != null) {
+                FrameLayout.LayoutParams lp =
+                        (FrameLayout.LayoutParams) mirrorView.getLayoutParams();
+                lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
+                lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+                lp.gravity = Gravity.TOP | Gravity.START;
+                mirrorView.setLayoutParams(lp);
+            }
+            if (directView != null) {
+                FrameLayout.LayoutParams lp =
+                        (FrameLayout.LayoutParams) directView.getLayoutParams();
+                lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
+                lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+                lp.gravity = Gravity.TOP | Gravity.START;
+                directView.setLayoutParams(lp);
+            }
+            if (host == Host.OVERLAY && windowParams != null) {
+                windowParams.x = initialBounds.x;
+                windowParams.y = initialBounds.y;
+                windowParams.width = initialBounds.width;
+                windowParams.height = initialBounds.height;
+                windowMgr.updateViewLayout(container, windowParams);
+            } else if (host == Host.PRESENTATION) {
+                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) container.getLayoutParams();
+                lp.width = initialBounds.width;
+                lp.height = initialBounds.height;
+                lp.leftMargin = initialBounds.x;
+                lp.topMargin = initialBounds.y;
+                container.setLayoutParams(lp);
+            }
+            mergeApplied = false;
+        } catch (Throwable t) {
+            ClusterLog.w(TAG, "merge layout revert failed", t);
+        }
+    }
+
     public synchronized void start() {
+        start(Mode.DIRECT);
+    }
+
+    public synchronized void start(Mode hostMode) {
         if (added) return;
-        if (tryStartPresentation()) return;
-        startOverlayFallback();
+        initialMode = hostMode == null ? Mode.DIRECT : hostMode;
+        boolean overlayAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                || Settings.canDrawOverlays(appContext);
+        if (overlayAllowed && tryStartOverlay()) {
+            tryApplyMergeLocked();
+            return;
+        }
+
+        ClusterLog.w(TAG, "overlay unavailable, fallback to Presentation: display="
+                + display.getDisplayId() + " mode=" + initialMode
+                + " overlayAllowed=" + overlayAllowed, null);
+        resetFailedHost();
+        if (tryStartPresentation()) {
+            tryApplyMergeLocked();
+            return;
+        }
+        throw new IllegalStateException("无法在 Display " + display.getDisplayId()
+                + " 创建仪表输出窗口，请检查悬浮窗权限和车机多屏策略");
+    }
+
+    private boolean tryStartOverlay() {
+        try {
+            startOverlayFallback();
+            return true;
+        } catch (Throwable t) {
+            ClusterLog.w(TAG, "overlay host rejected: display=" + display.getDisplayId()
+                    + " mode=" + initialMode + " detail=" + t.getMessage(), t);
+            return false;
+        }
     }
 
     private boolean tryStartPresentation() {
@@ -146,7 +300,7 @@ public final class OverlayWindowHost {
             ClusterLog.i(TAG, "Presentation shown on display=" + display.getDisplayId()
                     + " bounds=" + initialBounds);
             configureContainer();
-            showDirectLocked();
+            showInitialModeLocked();
             final FrameLayout postedContainer = container;
             postedContainer.post(() -> logContainerLayout("Presentation"));
             post(() -> logPresentationState("after-show-0ms"));
@@ -172,7 +326,7 @@ public final class OverlayWindowHost {
         container.setClipChildren(true);
         buildWindowParams();
         configureContainer();
-        showDirectLocked();
+        showInitialModeLocked();
         try {
             ClusterLog.i(TAG, "addView begin: display=" + display.getDisplayId()
                     + " type=" + overlayType() + " bounds=" + initialBounds
@@ -194,6 +348,23 @@ public final class OverlayWindowHost {
         }
     }
 
+    private void resetFailedHost() {
+        try {
+            if (windowMgr != null && container != null && container.isAttachedToWindow()) {
+                windowMgr.removeView(container);
+            }
+        } catch (Throwable t) {
+            ClusterLog.w(TAG, "remove failed overlay host", t);
+        }
+        added = false;
+        container = null;
+        directView = null;
+        mirrorView = null;
+        windowParams = null;
+        windowMgr = null;
+        windowContext = null;
+    }
+
     public boolean isAdded() {
         return added;
     }
@@ -211,6 +382,7 @@ public final class OverlayWindowHost {
                 + " mode=" + mode + " display=" + display.getDisplayId());
         if (!added) return;
         try {
+            removeDashboardOverlayLocked();
             removeMirrorLocked();
             removeDirectLocked();
             if (host == Host.PRESENTATION) {
@@ -249,6 +421,10 @@ public final class OverlayWindowHost {
             ClusterLog.w(TAG, "setBounds ignored: added=" + added + " bounds=" + bounds);
             return;
         }
+        if (mergeApplied) {
+            ClusterLog.i(TAG, "setBounds ignored during merge layout (window is fullscreen)");
+            return;
+        }
         initialBounds = bounds;
         if (host == Host.PRESENTATION) {
             FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) container.getLayoutParams();
@@ -283,6 +459,14 @@ public final class OverlayWindowHost {
     private void configureContainer() {
         container.setClipChildren(true);
         container.setAlpha(opacity);
+    }
+
+    private void showInitialModeLocked() {
+        if (initialMode == Mode.MIRROR) {
+            showMirrorLocked();
+        } else {
+            showDirectLocked();
+        }
     }
 
     private void showDirectLocked() {
@@ -391,24 +575,26 @@ public final class OverlayWindowHost {
         mirrorView = null;
     }
 
+    private void removeDashboardOverlayLocked() {
+        if (dashboardOverlay == null) return;
+        try {
+            container.removeView(dashboardOverlay);
+        } catch (Throwable t) {
+            ClusterLog.w(TAG, "remove dashboard overlay failed", t);
+        }
+        dashboardOverlay = null;
+        mergeApplied = false;
+    }
+
     private void buildWindowContextAndManager() {
         int type = overlayType();
         ClusterLog.i(TAG, "build window context: sdk=" + Build.VERSION.SDK_INT
                 + " display=" + display.getDisplayId() + " type=" + type
                 + " appContext=" + appContext.getClass().getName());
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                windowContext = appContext.createWindowContext(display, type, null);
-                ClusterLog.i(TAG, "using WindowContext for display=" + display.getDisplayId());
-            } catch (LinkageError | RuntimeException e) {
-                ClusterLog.w(TAG, "createWindowContext unavailable, fallback to DisplayContext"
-                        + " display=" + display.getDisplayId(), e);
-                windowContext = appContext.createDisplayContext(display);
-            }
-        } else {
-            windowContext = appContext.createDisplayContext(display);
-            ClusterLog.i(TAG, "using DisplayContext for display=" + display.getDisplayId());
-        }
+        // FX11 Android 11 的 framework 实测可能缺少 createWindowContext；
+        // createDisplayContext + TYPE_APPLICATION_OVERLAY 是应用管家已验证的兼容路径。
+        windowContext = appContext.createDisplayContext(display);
+        ClusterLog.i(TAG, "using DisplayContext for display=" + display.getDisplayId());
         ClusterLog.i(TAG, "window context class=" + windowContext.getClass().getName()
                 + " display=" + display.getDisplayId());
         windowMgr = (WindowManager) windowContext.getSystemService(Context.WINDOW_SERVICE);
